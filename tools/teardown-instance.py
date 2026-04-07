@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = build_parser().parse_args()
-    ec2 = ec2_client()
+    ec2 = ec2_client
 
     if args.check:
         ok = check_no_instances(ec2, args.tag)
