@@ -9,6 +9,16 @@ mixed imperative-command and agentic plain-language instruction approach: the
 user cooperates to authenticate an agent on the cloud node, then the agent
 assists with workflow execution.
 
+## Local runtime
+
+- **Project venv** at `venv/` (Python, boto3, paramiko, etc.). Activate
+  before running any `tools/` script or boto3 snippet.
+- **AWS credentials** in `.env` at project root (`AWS_ACCESS_KEY_ID_CLOUD`,
+  `AWS_SECRET_ACCESS_KEY_CLOUD`, `AWS_DEFAULT_REGION`). Loaded
+  automatically by tools via `python-dotenv`.
+- Full setup details:
+  [local dev workstation profile](profiling/local-dev-env/dev-workstation.profile.md).
+
 ## Design intentions
 
 - File transfer to/from cloud nodes uses SSH + rsync.
