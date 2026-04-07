@@ -19,6 +19,32 @@ assists with workflow execution.
 - Full setup details:
   [local dev workstation profile](profiling/local-dev-env/dev-workstation.profile.md).
 
+## Cloud resources catalog
+
+Two files at the repo root; roles are inverted on purpose:
+
+- **Committed template (unfilled):** [cloud-resources.example.md](cloud-resources.example.md)
+  — checked in, git-tracked. Keeps **layout and placeholder values only** (fictional
+  **node** rows, instance IDs, IPs, AMI IDs, SSH examples). Do **not** paste real
+  inventory here; that would leak operational data into git.
+
+- **Local catalog (filled):** **`cloud-resources.md`** — **gitignored**. Copy from
+  the example when missing, then maintain it with **real** AMIs, nodes, and current
+  SSH lines. Clones do not ship this file until someone creates it (do not invent a
+  parallel location).
+
+**What it is for:** Operational source of truth for this repo’s AWS
+inventory — AMIs, **active base/task nodes** (instance id, public IP,
+status, **WORKDIR**), and **current usable** `ssh` / `scp` / `rsync` lines. Committed
+profiles do **not** carry AMI or instance identifiers; resolve them here.
+
+**Agent maintenance (non-optional):** After any workflow that changes that
+inventory or which `Host` entries are valid — e.g. `tools/launch-spot-instance.py`,
+`tools/teardown-instance.py`, `tools/create-ami.py`, manual EC2/AMI changes,
+or edits to `~/.ssh/config` for `cloud-task-*` — update `cloud-resources.md`
+**in the same session** (Nodes table including **WORKDIR**, AMIs table, SSH section) so the next
+agent or human does not rely on stale IDs or dead SSH commands.
+
 ## Design intentions
 
 - File transfer to/from cloud nodes uses SSH + rsync.
@@ -28,9 +54,8 @@ assists with workflow execution.
   `profiling/`.
 - AWS configuration (IAM policies, etc.) is tracked as config-as-code in
   `cloud/` and applied with CLI tooling, not console actions.
-- **Cloud resources catalog** tracked in `cloud-resources.md` (gitignored);
-  see [cloud-resources.example.md](cloud-resources.example.md) for the
-  committed template.
+- Live AMI/instance access commands: **`cloud-resources.md`** (see section
+  above); not duplicated in committed profiles.
 
 ## Profile refinement rule
 
@@ -45,7 +70,10 @@ session logs and ad-hoc notes are overflow, not primary.
 ## Navigation
 
 **On session start:** Load this file for orientation. This is the single entry
-point for understanding the project.
+point for understanding the project. If work may touch EC2, AMIs, or SSH to
+`cloud-task-*` hosts, read **`cloud-resources.md`** when it exists (see
+[Cloud resources catalog](#cloud-resources-catalog)); do not assume AMI IDs
+or live instance details from profiles alone.
 
 **Routing:** Consult [INDEX.md](INDEX.md) for the project area roster. Load the
 target area's AGENTS.md for detail. Each step loads a single, bounded file — do
