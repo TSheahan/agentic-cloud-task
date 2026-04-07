@@ -12,7 +12,7 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 - **AMI lifecycle**: often one-shot; instances can be **stopped and restarted**
   (stop-on-shutdown, not terminate-on-shutdown) while root EBS still **deletes on
   terminate** — see [oww-training-env.profile.md](oww-training-env.profile.md) Target
-  State (EC2).
+  State (**Instance, SSH, auth, and cataloged WORKDIR** and Apply §1).
 - **Transfer**: rsync trained model artifacts out on completion
 
 ## Contents
