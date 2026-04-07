@@ -31,6 +31,17 @@ Each subdirectory is a provisioning case. Dependency order:
 
 ## Cloud-specific adaptation notes
 
+- **AMI and node inventory do not belong in committed profiles.** Treat AMIs,
+  instance IDs, public IPs, and live node/SSH status as local operational data:
+  record them only in the gitignored root file
+  [`cloud-resources.md`](../cloud-resources.md). The committed file
+  [`cloud-resources.example.md`](../cloud-resources.example.md) is the **template**
+  (structure + **fabricated** table rows); keep it free of real account inventory in
+  git. The filled `cloud-resources.md` tracks **running base/task instances** (Name
+  tag, instance id, public IP, status, **WORKDIR**) and a **current SSH quick reference** (`ssh`
+  / `scp` / `rsync` using each `Host` alias). Profiles should describe *how* to
+  choose or bake an image (raw DL AMI, naming convention, purge-before-bake) and
+  point to `cloud-resources.md` for live IDs and access commands.
 - Cloud instances are ephemeral (launch → work → terminate).
 - Profiles may split into an "AMI bake" phase (one-time golden image
   creation) and an "instance boot" phase (runs every launch).

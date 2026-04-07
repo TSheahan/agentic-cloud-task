@@ -22,13 +22,19 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 - **A running EC2 spot instance exists** with these properties:
   - AMI: either the raw AWS Deep Learning Base GPU AMI or a baked base
     image (which includes all system-state items below pre-applied).
-    Region-specific AMI IDs:
-    - `ap-southeast-2` (raw DL AMI): `ami-084f512b0521b5fb4`
-    - No baked base currently registered. Previous bake
-      (`ami-081e306c4cb3f5acf`, 2026-04-07) was deregistered — it
-      contained baked-in secrets (agent OAuth token, `gh` token, git
-      credential helper). Future bakes must run the pre-bake secrets
-      purge (Apply §5) before image creation.
+    **AMI IDs are not recorded here** — project policy: keep current
+    identifiers in the gitignored catalog
+    [`cloud-resources.md`](../../cloud-resources.md) (see
+    [`cloud-resources.example.md`](../../cloud-resources.example.md) for
+    layout and logical names). Resolve the raw Deep Learning Base GPU AMI
+    for your region via the EC2 launch wizard or AWS documentation; record
+    both raw and baked IDs in that catalog as you use them.
+    For a **baked core** golden image, run Apply §2–4, pre-bake secrets
+    purge (Apply §5), then register the AMI and add a row to the catalog
+    (e.g. logical name `baked-core-gpu`). A prior project bake was
+    deregistered after it was found to contain baked-in secrets (agent
+    OAuth token, `gh` token, git credential helper); always run the
+    pre-bake purge (Apply §5) before creating an image.
   - Instance type: `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
   - Storage: gp3 EBS, minimum 75 GB (AMI snapshot floor), delete on
     termination. The AMI consumes ~51 GB out of the box (four CUDA
@@ -50,8 +56,9 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 - **System packages installed:** `python3-venv`, `git`, `gh`, `ffmpeg`,
   `libsndfile1`. (`python3-venv` is absent from the DL AMI's minimal
-  Python — venv creation fails without it. `gh` enables the on-device
-  agent to interact with GitHub.)
+  Python — venv creation fails without it. `gh` is installed so
+  authentication is available when a convergence path needs **HTTPS git
+  operations from the instance**; logging in is conditional — see below.)
 
 - **Python 3.10 or 3.11 is available** (the DL AMI includes both).
 
@@ -66,28 +73,38 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 - **User has an SSH profile** for the instance (agent auth, co-troubleshooting,
   monitoring, on-device agent invocation).
 
-- **Agent installed and authenticated.** Installation has two phases:
-  - *Agentic prep* (automatable from the controlling machine via SSH):
-    install the agent CLI (`cursor` or `agent` may appear on PATH depending
-    on install), add it to PATH, clone the project repo so the agent has the
-    profile in its workspace, then set `git config user.name` and
-    `user.email` in that repo to match the development workstation (see
-    Apply §1).
-  - *User action*: cooperative headless auth — see the
-    [headless-auth profile](../headless-auth/headless-auth.profile.md)
-    for the full flow (agent runs `NO_OPEN_BROWSER=1 agent login`, user
-    completes OAuth in local browser).
+- **Agent CLI installed; project workspace on the instance.** *Agentic
+  prep* (from the controlling machine via SSH): install the agent CLI
+  (`cursor` or `agent` may appear on PATH depending on install), add it to
+  PATH, clone the project repo so an on-device agent would have the
+  profile in its workspace, then set `git config user.name` and
+  `user.email` in that repo to match the development workstation (Apply
+  §1). **No OAuth is required for this prep** — public clone and install
+  only.
 
-- **GitHub CLI authenticated.** `gh auth status` succeeds, and
-  `gh auth setup-git` has been run so HTTPS git operations use `gh` as
-  the credential helper. This lets the on-device agent push commits and
-  create PRs. The device-code flow is defined in the
-  [headless-auth profile](../headless-auth/headless-auth.profile.md).
+- **Agent OAuth and `gh` authentication** — **only when in scope** for
+  the convergence you are running. Cooperative auth ([headless-auth
+  profile](../headless-auth/headless-auth.profile.md)) is wanted when
+  **either**:
+  - **On-device agentic help** is needed for work **outside** happy-path
+    remote provisioning — i.e. you want the agent **on the instance** to
+    drive remaining convergence (apt fixes, packages, iteration,
+    troubleshooting) with local judgment, rather than only SSH scripts
+    from the controlling machine; **or**
+  - **`git push` or PR creation via HTTPS from the instance** is required
+    and **not** already satisfied by the happy path (everything done from
+    the controlling machine with no need to push from the node).
 
-  Once the agent and `gh` are authenticated, the on-device agent reads
-  this profile and drives remaining provisioning (apt fixes, package
-  installs) locally with iterative error handling — this is more robust
-  than scripting those steps remotely.
+  **When neither applies** — e.g. Apply §2–4 executed entirely over SSH,
+  or a **baked AMI** workflow where tokens must not exist on disk — **skip**
+  headless auth entirely, complete base provisioning without logging in,
+  run **pre-bake purge (Apply §5)** before any AMI snapshot, and treat
+  “authenticated agent / `gh`” as **not** part of this convergence’s target
+  state.
+
+  **When in scope:** run agent OAuth and `gh auth` / `gh auth setup-git`
+  per headless-auth. Then the on-device agent can drive §2–4 locally and
+  push to GitHub where needed.
 
 ### Pre-bake image hygiene
 
@@ -107,13 +124,17 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 ## Apply
 
-When launching from a **baked base AMI** (if one exists), steps 1–4 are
-already applied. Skip to per-instance auth: agent OAuth (step 1) and
-`gh auth` (step 1 gh section). Use the baked AMI ID in the launch
-command below.
+When launching from a **baked base AMI** (if one exists), steps 2–4 are
+already applied. **Step 1** reduces to: agentic prep only if the image
+does not already include it; then **optional** headless auth — only if
+this session needs on-device agentic work or `git push`/PR from the
+instance (see Target State). Otherwise SSH in and continue task work, or
+run §5 before baking. Use the baked AMI ID from
+[`cloud-resources.md`](../../cloud-resources.md) in the launch command below.
 
-When launching from the **raw DL AMI** (`ami-084f512b0521b5fb4`), run all
-steps in order.
+When launching from the **raw DL AMI**, run all steps in order. Take the
+AMI ID from [`cloud-resources.md`](../../cloud-resources.md) or from an
+EC2 / AWS console lookup for *Deep Learning Base GPU* in the target region.
 
 **Before baking a new AMI**, always run step 5 (pre-bake secrets purge)
 and verify with the corresponding audit checks. No secrets in the image.
@@ -133,12 +154,14 @@ python tools/launch-spot-instance.py \
     --tag cloud-task-<name>
 ```
 
-Use the baked base AMI ID (if one exists — see Target State) or
-`ami-084f512b0521b5fb4` (raw).
+Use the baked base AMI ID from [`cloud-resources.md`](../../cloud-resources.md)
+if one exists, otherwise the raw Deep Learning Base GPU AMI ID from the
+same catalog or a fresh region lookup.
 
-Replace `<name>` with the task slug (e.g. `sara`, `ocr`). Ask the user,
-and offer default `base` since that is correct except in the case where
-multiple base builds are wanted. The tool prints `instance_id=` and
+Replace `<name>` with the task slug (e.g. `sara`, `ocr`). For the main
+**core** baked-image build pipeline, use `core` → tag `cloud-task-core`
+and SSH host `cloud-task-core`. Otherwise ask the user and offer default
+`base` when a generic one-off base instance is enough. The tool prints `instance_id=` and
 `public_ip=` on success. The SSH config entry inherits connection
 defaults from the `cloud-task-*` wildcard block established by the
 [local dev environment profile](../local-dev-env/dev-workstation.profile.md).
@@ -151,9 +174,12 @@ wait and retry.
 
 ### 1. Install agent on instance
 
-Front-load agent access so the on-device agent can drive remaining
-provisioning with local iterative troubleshooting — more robust than
-scripting apt/package steps remotely.
+**Agentic prep** (almost always): install CLI + repo from the controlling
+machine via SSH. **Headless auth** (agent + `gh`): **only** if this run
+needs on-device agentic convergence or `git push`/PR from the instance
+(Target State). If you are doing **remote-only** §2–4 over SSH or heading
+for a **purge-then-bake** AMI, complete prep below, then **skip** to §2
+without logging in.
 
 **Agentic prep** (run from controlling machine via SSH):
 
@@ -182,12 +208,15 @@ calling agent or operator should set the same two fields in
 `user.email` from the origin (development) system — the agent can take
 those values from the environment where it was invoked.
 
-**Auth flows** (agent + GitHub): follow the
+**Auth flows** (agent + GitHub) — **when in scope only:** follow the
 [headless-auth profile](../headless-auth/headless-auth.profile.md). Both
-flows are agent-initiated, user-completed via local browser.
+flows are agent-initiated, user-completed via local browser. With both
+authenticated, the on-device agent can drive steps 2–4 locally and push
+results to GitHub.
 
-With both agent and `gh` authenticated, the agent can drive steps 2–4
-locally and push results to GitHub.
+**When auth is out of scope:** do not run login flows; drive §2–4 from the
+controlling machine (`ssh … 'bash -s'`, uploaded scripts, or an equivalent
+happy path). Before creating an AMI, always run §5.
 
 ### 2. Fix DL AMI apt configuration
 
@@ -291,8 +320,9 @@ entry.
 ## Audit
 
 When the executor is **on the instance** (e.g. on-device agent), run checks
-**2–4**, **8**, **9**, and **10** locally; **1**, **5**, and **6** require
-the controlling machine; **7** is human-verified. Check **10** is only
+**2–4**, **8** (prep always; auth sub-check only if auth is in scope), **9**
+(only if `gh` auth is in scope), and **10** locally; **1**, **5**, and **6**
+require the controlling machine; **7** is human-verified. Check **10** is only
 relevant before AMI bake.
 
 ### 1. A running EC2 spot instance exists
@@ -365,9 +395,9 @@ Expected: line containing the instance's public IP
 Human-verified. The user confirms they have an interactive SSH session
 profile for the instance (terminal tab, IDE remote session, or equivalent).
 
-### 8. Agent installed and authenticated
+### 8. Agent CLI installed; authenticated only if auth is in scope
 
-Prep check (on-instance):
+Prep checks (on-instance) — **always** for this profile’s base layout:
 
 ```bash
 (command -v cursor >/dev/null 2>&1 || command -v agent >/dev/null 2>&1) \
@@ -383,28 +413,35 @@ test -d ~/agentic-cloud-task/.git \
 ```
 Expected: `PASS: project repo cloned`
 
-Authentication check (on-instance, from the project repo directory):
+Authentication check (on-instance, from the project repo directory) —
+**run only when** Target State for this convergence includes logged-in
+agent (on-device agentic path). **Skip** for remote-only provision or
+pre-bake (expect `agent login` / API-key messaging instead of `ok`):
 
 ```bash
 echo "harness check: respond with 'ok'" | agent -p
 ```
-Expected: `ok`
+Expected when auth is in scope: `ok`
 
-### 9. GitHub CLI authenticated
+### 9. GitHub CLI authenticated — only when `gh` auth is in scope
+
+**Run when** Target State requires HTTPS git from the instance (`git push`,
+PRs). **Skip** when provisioning was remote-only and no `gh` session is
+required.
 
 ```bash
 gh auth status >/dev/null 2>&1 \
     && echo "PASS: gh authenticated" \
     || echo "FAIL: gh not authenticated"
 ```
-Expected: `PASS: gh authenticated`
+Expected when in scope: `PASS: gh authenticated`
 
 ```bash
 git config --global credential.helper 2>/dev/null | grep -q 'gh' \
     && echo "PASS: gh credential helper configured" \
     || echo "FAIL: gh credential helper not set"
 ```
-Expected: `PASS: gh credential helper configured`
+Expected when in scope: `PASS: gh credential helper configured`
 
 ### 10. No secrets in bake-eligible state
 
