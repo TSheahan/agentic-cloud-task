@@ -7,7 +7,10 @@ share it.
 
 ## Conventions
 
-- Tools read AWS credentials from the project `.env` via `python-dotenv`.
+- **`_env.py`** is the shared environment module. It loads `.env` on import
+  and exports project root, AWS credential values, and client factories.
+  All tools import from it — no tool loads `.env` or constructs AWS clients
+  directly.
 - Tools are invoked from the project venv (`venv/`) established by the
   [local dev workstation profile](../profiling/local-dev-env/dev-workstation.profile.md).
 - Each tool is self-documenting (`--help`).
@@ -15,7 +18,8 @@ share it.
 
 ## Contents
 
-| Tool | Purpose |
+| File | Purpose |
 |------|---------|
+| [_env.py](_env.py) | Shared environment: loads `.env`, exports `PROJECT_ROOT`, AWS credentials, `ec2_client()` factory |
 | [launch-spot-instance.py](launch-spot-instance.py) | Ensure security group, launch EC2 spot instance, wait for running, return IP. Write SSH config entry. |
 | [teardown-instance.py](teardown-instance.py) | Terminate tagged instances, clean up security group and SSH config entry. |

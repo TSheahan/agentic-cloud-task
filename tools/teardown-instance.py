@@ -18,30 +18,16 @@ Usage:
 """
 
 import argparse
-import os
 import re
 import sys
 import time
 from pathlib import Path
 
-import boto3
-from dotenv import load_dotenv
+from _env import ec2_client
 from loguru import logger
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 DEFAULT_SG_NAME = "cloud-task-sg"
 SSH_CONFIG_PATH = Path.home() / ".ssh" / "config"
-
-
-def get_ec2_client():
-    return boto3.client(
-        "ec2",
-        region_name=os.environ["AWS_DEFAULT_REGION"],
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID_CLOUD"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY_CLOUD"],
-    )
 
 
 def find_tagged_instances(ec2, tag: str) -> list[str]:
@@ -141,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = build_parser().parse_args()
-    ec2 = get_ec2_client()
+    ec2 = ec2_client()
 
     if args.check:
         ok = check_no_instances(ec2, args.tag)
