@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# aws_train.sh — Hudson's Bay first-pass OWW training for hey_sara
+# aws_train.sh — DEPRECATED (Hudson's Bay Piper-first remote setup)
+# See deprecated-hudsons-bay/AGENTS.md. Current path: oww-training-env.profile.md
 #
 # Run this on an AWS GPU instance (g4dn.xlarge or similar).
 # Prerequisites: this script handles setup from a fresh Ubuntu + CUDA instance.

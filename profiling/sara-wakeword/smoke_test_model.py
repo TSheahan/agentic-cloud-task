@@ -6,8 +6,8 @@ without error, then optionally listens on the mic for a live test.
 
 Usage:
     source ~/venv/bin/activate
-    python ~/sara/hudsons-bay/smoke_test_model.py model/hey_sara.onnx
-    python ~/sara/hudsons-bay/smoke_test_model.py model/hey_sara.onnx --live
+    python profiling/sara-wakeword/smoke_test_model.py path/to/hey_sara.onnx
+    python profiling/sara-wakeword/smoke_test_model.py path/to/hey_sara.onnx --live
 """
 
 import argparse

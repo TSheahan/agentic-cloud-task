@@ -2,7 +2,7 @@
 
 Durable reference for the "hey Sara" custom OpenWakeWord model. Distilled
 from the original project plan and two Hudson's Bay training sessions
-(2026-04-06).
+(2026-04-06; logs under [deprecated-hudsons-bay/](deprecated-hudsons-bay/AGENTS.md)).
 
 ---
 
@@ -45,13 +45,14 @@ augmenting the synthetic speech samples.
 
 ## Two-tier sample generation strategy
 
-Unlike the standard OWW pipeline (Piper TTS only), this project uses
-higher-quality TTS for part of the training data:
+The convergence profile’s **happy path** uses **Cartesia** for bulk WAVs; Piper is
+**deprecated** (Appendix A only). Relative to upstream OWW (Piper-first), this
+project prefers higher-quality cloud TTS for training data:
 
 **Tier 1 — Synthetic (bulk, diverse)**
-- Piper TTS (OWW's native path — free, many voices, lower quality)
-- Cartesia API (Allie voice + other voices for diversity)
-- ElevenLabs API (multiple voices)
+- **Cartesia API** (preferred happy path for this repo — Allie voice + other voices for diversity)
+- ElevenLabs API, Deepgram (optional alternates via `generate_samples.py`)
+- Piper TTS (OWW upstream default — **deprecated** for product-quality training here; parked in `oww-training-env.profile.md` Appendix A)
 - Target: 10,000-50,000 positive clips across all sources
 - Vary: voice, speed, pitch, emphasis, leading/trailing silence
 
@@ -98,7 +99,8 @@ Mitigation options explored:
 1. **Containerised trainer:** `github.com/briankelley/atlas-voice-training/`
 2. **lgpearson1771/openwakeword-trainer:** automated 13-step pipeline with
    compat patches
-3. **Manual env setup** on AWS with pinned deps (the Hudson's Bay approach)
+3. **Manual env setup** on AWS with pinned deps (early approach; see archived
+   [`deprecated-hudsons-bay/aws_train.sh`](deprecated-hudsons-bay/aws_train.sh))
 
 ---
 

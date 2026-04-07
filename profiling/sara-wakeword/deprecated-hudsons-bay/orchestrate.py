@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Orchestrate OWW training on AWS from the Pi.
+"""DEPRECATED — Hudson's Bay-era automation (see deprecated-hudsons-bay/AGENTS.md).
 
-Launches a g4dn.xlarge spot instance, uploads the training config,
-runs aws_train.sh remotely, pulls back hey_sara.onnx, and tears
-everything down. One command, one file back.
+Launches a g4dn.xlarge spot instance, uploads training files,
+runs aws_train.sh remotely, pulls back hey_sara.onnx, tears down.
 
-Usage:
-    source ~/venv/bin/activate
-    python ~/sara/hudsons-bay/orchestrate.py
+Prefer: oww-training-env.profile.md + tools/launch-spot-instance.py + cloud-resources.md.
 
-    # Dry run (create infra, print SSH command, don't train):
-    python ~/sara/hudsons-bay/orchestrate.py --dry-run
-
-    # Teardown only (if a previous run left resources):
-    python ~/sara/hudsons-bay/orchestrate.py --teardown-only
+Usage (from repo, project venv):
+    python profiling/sara-wakeword/deprecated-hudsons-bay/orchestrate.py --dry-run
 
 Credentials: AWS_ACCESS_KEY_ID_CLOUD, AWS_SECRET_ACCESS_KEY_CLOUD,
 AWS_DEFAULT_REGION in project .env
@@ -31,7 +25,8 @@ import paramiko
 from dotenv import load_dotenv
 from loguru import logger
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -46,7 +41,10 @@ KEY_NAME = "sara-training-key"
 SG_NAME = "sara-training-sg"
 TAG_VALUE = "sara-hudsons-bay"
 
+# This script lives in deprecated-hudsons-bay/; case assets live in parent sara-wakeword/
 LOCAL_DIR = Path(__file__).resolve().parent
+SARA_WAKEWORD_DIR = LOCAL_DIR.parent
+
 MODEL_OUTPUT = LOCAL_DIR / "model" / "hey_sara.onnx"
 SSH_KEY_PATH = LOCAL_DIR / ".ssh_key.pem"
 
@@ -54,10 +52,10 @@ SSH_USER = "ubuntu"
 SSH_TIMEOUT = 10
 SSH_RETRIES = 30  # 30 × 10s = 5 min max wait for instance SSH
 
-# Files to upload
-UPLOAD_FILES = [
-    "aws_train.sh",
-    "hey_sara_model.yml",
+# Local path -> remote basename under ~/hudsons-bay/
+UPLOAD_FILES: list[tuple[Path, str]] = [
+    (LOCAL_DIR / "aws_train.sh", "aws_train.sh"),
+    (SARA_WAKEWORD_DIR / "hey_sara_model.yml", "hey_sara_model.yml"),
 ]
 
 
@@ -196,7 +194,7 @@ def wait_for_ssh(ip: str) -> paramiko.SSHClient:
     raise RuntimeError("unreachable")
 
 
-def upload_files(ssh: paramiko.SSHClient, files: list[str]):
+def upload_files(ssh: paramiko.SSHClient, files: list[tuple[Path, str]]):
     """Upload training files to ~/hudsons-bay/ on the instance."""
     sftp = ssh.open_sftp()
     try:
@@ -204,11 +202,10 @@ def upload_files(ssh: paramiko.SSHClient, files: list[str]):
             sftp.mkdir("/home/ubuntu/hudsons-bay")
         except IOError:
             pass
-        for fname in files:
-            local = LOCAL_DIR / fname
-            remote = f"/home/ubuntu/hudsons-bay/{fname}"
-            logger.info("Uploading {} -> {}", local.name, remote)
-            sftp.put(str(local), remote)
+        for local_path, remote_name in files:
+            remote = f"/home/ubuntu/hudsons-bay/{remote_name}"
+            logger.info("Uploading {} -> {}", local_path.name, remote)
+            sftp.put(str(local_path), remote)
         sftp.chmod("/home/ubuntu/hudsons-bay/aws_train.sh", 0o755)
     finally:
         sftp.close()
