@@ -21,6 +21,6 @@ share it.
 | File | Purpose |
 |------|---------|
 | [_env.py](_env.py) | Shared environment: loads `.env`, exports `PROJECT_ROOT`, AWS credentials, `ec2_client` (ready-to-use boto3 EC2 client) |
-| [launch-spot-instance.py](launch-spot-instance.py) | Ensure security group, launch EC2 spot instance, wait for running, return IP. Write SSH config entry. |
+| [launch-spot-instance.py](launch-spot-instance.py) | Ensure security group, launch EC2 instance (spot or on-demand), wait for running, return IP. Optional: guest shutdown stop vs terminate, `--persist-root-volume` (off by default: delete root EBS on instance terminate), spot interruption behavior. Write SSH config entry. |
 | [teardown-instance.py](teardown-instance.py) | Terminate tagged instances, clean up security group and SSH config entry. |
 | [create-ami.py](create-ami.py) | Create an AMI from a tagged running instance, wait for available. |

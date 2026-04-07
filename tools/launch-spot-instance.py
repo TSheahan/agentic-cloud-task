@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Launch an EC2 spot instance and return its public IP.
+"""Launch an EC2 instance (spot or on-demand) and return its public IP.
 
 Atomic steps:
   1. Ensure a security group exists (create-if-absent, SSH inbound).
-  2. Request a spot instance with the given parameters.
+  2. Request an instance with the given parameters.
   3. Wait for the instance to reach 'running'.
   4. Retrieve and print the public IP.
   5. Optionally write/update an SSH config Host entry.
@@ -13,10 +13,19 @@ AWS_SECRET_ACCESS_KEY_CLOUD, AWS_DEFAULT_REGION).
 
 Usage:
     python tools/launch-spot-instance.py \\
-        --ami ami-084f512b0521b5fb4 \\
+        --ami <ami-id-from-cloud-resources-md> \\
         --instance-type g4dn.xlarge \\
         --volume-gb 40 \\
         --tag cloud-task-sara
+
+    # Stop (not terminate) on guest shutdown; root EBS still deletes on terminate (default)
+    python tools/launch-spot-instance.py \\
+        --ami <ami-id> --tag cloud-task-sara \\
+        --instance-initiated-shutdown-behavior stop
+
+    # Optional: retain root EBS after instance termination (orphan volume until you delete it)
+    python tools/launch-spot-instance.py \\
+        --ami <ami-id> --tag cloud-task-sara --persist-root-volume
 
     # Check mode (Audit): report whether a matching instance is running
     python tools/launch-spot-instance.py --tag cloud-task-sara --check
@@ -81,44 +90,54 @@ def launch_instance(
     key_name: str,
     sg_id: str,
     spot_max_price: str,
+    *,
+    market_type: str,
+    delete_root_on_termination: bool,
+    instance_initiated_shutdown_behavior: str,
+    spot_interruption_behavior: str,
 ) -> str:
-    """Launch a spot instance. Returns instance ID."""
-    resp = ec2.run_instances(
-        ImageId=ami,
-        InstanceType=instance_type,
-        KeyName=key_name,
-        SecurityGroupIds=[sg_id],
-        MinCount=1,
-        MaxCount=1,
-        InstanceMarketOptions={
+    """Launch an EC2 instance. Returns instance ID."""
+    bdm = [{
+        "DeviceName": "/dev/sda1",
+        "Ebs": {
+            "VolumeSize": volume_gb,
+            "VolumeType": "gp3",
+            "DeleteOnTermination": delete_root_on_termination,
+        },
+    }]
+    tags = [
+        {
+            "ResourceType": rt,
+            "Tags": [
+                {"Key": "Name", "Value": tag},
+                {"Key": "Project", "Value": "agentic-cloud-task"},
+            ],
+        }
+        for rt in ("instance", "volume", "network-interface")
+    ]
+    kwargs = {
+        "ImageId": ami,
+        "InstanceType": instance_type,
+        "KeyName": key_name,
+        "SecurityGroupIds": [sg_id],
+        "MinCount": 1,
+        "MaxCount": 1,
+        "BlockDeviceMappings": bdm,
+        "InstanceInitiatedShutdownBehavior": instance_initiated_shutdown_behavior,
+        "TagSpecifications": tags,
+    }
+    if market_type == "spot":
+        kwargs["InstanceMarketOptions"] = {
             "MarketType": "spot",
             "SpotOptions": {
                 "MaxPrice": spot_max_price,
                 "SpotInstanceType": "one-time",
-                "InstanceInterruptionBehavior": "terminate",
+                "InstanceInterruptionBehavior": spot_interruption_behavior,
             },
-        },
-        BlockDeviceMappings=[{
-            "DeviceName": "/dev/sda1",
-            "Ebs": {
-                "VolumeSize": volume_gb,
-                "VolumeType": "gp3",
-                "DeleteOnTermination": True,
-            },
-        }],
-        TagSpecifications=[
-            {
-                "ResourceType": rt,
-                "Tags": [
-                    {"Key": "Name", "Value": tag},
-                    {"Key": "Project", "Value": "agentic-cloud-task"},
-                ],
-            }
-            for rt in ("instance", "volume", "network-interface")
-        ],
-    )
+        }
+    resp = ec2.run_instances(**kwargs)
     instance_id = resp["Instances"][0]["InstanceId"]
-    logger.info("Spot instance requested: {}", instance_id)
+    logger.info("{} instance requested: {}", market_type.replace("-", " ").title(), instance_id)
     return instance_id
 
 
@@ -193,7 +212,7 @@ def check_instance(ec2, tag: str) -> bool:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Launch an EC2 spot instance (or check for one).",
+        description="Launch an EC2 instance, spot or on-demand (or check for one).",
     )
     p.add_argument("--ami", help="AMI ID to launch")
     p.add_argument("--instance-type", default="g4dn.xlarge")
@@ -202,7 +221,31 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Name tag for the instance (e.g. cloud-task-sara)")
     p.add_argument("--key-name", default=DEFAULT_KEY_NAME)
     p.add_argument("--sg-name", default=DEFAULT_SG_NAME)
-    p.add_argument("--spot-max-price", default=DEFAULT_SPOT_MAX_PRICE)
+    p.add_argument(
+        "--market-type",
+        choices=("spot", "on-demand"),
+        default="spot",
+        help="Spot (default) or on-demand pricing.",
+    )
+    p.add_argument("--spot-max-price", default=DEFAULT_SPOT_MAX_PRICE,
+                   help="Spot max price (spot market only).")
+    p.add_argument(
+        "--spot-interruption-behavior",
+        choices=("terminate", "stop", "hibernate"),
+        default="terminate",
+        help="What AWS does on spot capacity reclaim (spot market only).",
+    )
+    p.add_argument(
+        "--instance-initiated-shutdown-behavior",
+        choices=("stop", "terminate"),
+        default="stop",
+        help="Guest-initiated shutdown: stop the instance (default) or terminate it.",
+    )
+    p.add_argument(
+        "--persist-root-volume",
+        action="store_true",
+        help="EBS root volume is not deleted when the instance is terminated.",
+    )
     p.add_argument("--ssh-host-alias",
                    help="SSH config Host alias (defaults to --tag value)")
     p.add_argument("--no-ssh-config", action="store_true",
@@ -234,6 +277,10 @@ def main():
         key_name=args.key_name,
         sg_id=sg_id,
         spot_max_price=args.spot_max_price,
+        market_type=args.market_type,
+        delete_root_on_termination=not args.persist_root_volume,
+        instance_initiated_shutdown_behavior=args.instance_initiated_shutdown_behavior,
+        spot_interruption_behavior=args.spot_interruption_behavior,
     )
     ip = wait_for_running(ec2, instance_id)
 
