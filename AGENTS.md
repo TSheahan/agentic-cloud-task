@@ -19,6 +19,16 @@ assists with workflow execution.
 - AWS configuration (IAM policies, etc.) is tracked as config-as-code in
   `cloud/` and applied with CLI tooling, not console actions.
 
+## Profile refinement rule
+
+When an agent reads or edits any file in `profiling/`, it should load the
+[state convergence pattern](policies/state-convergence-pattern.md) if it
+hasn't already. Profile refinement is **inline with the work, not trailing.**
+When a step reveals a new constraint, corrects a wrong assumption, or
+confirms an expected state, fold that into the profile as part of the same
+action — don't defer it to a cleanup pass. The profile is the living record;
+session logs and ad-hoc notes are overflow, not primary.
+
 ## Navigation
 
 **On session start:** Load this file for orientation. This is the single entry

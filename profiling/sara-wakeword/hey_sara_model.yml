@@ -1,0 +1,58 @@
+# OpenWakeWord training config — Hudson's Bay first pass for "hey Sara"
+#
+# Minimal viable config: low sample count, default Piper TTS, small model.
+# Goal: prove the pipeline produces a loadable hey_sara.onnx, not quality.
+#
+# Run from hudsons-bay directory on AWS with:
+#   python -m openwakeword.train --training_config hey_sara_model.yml \
+#       --generate_clips --augment_clips --train_model
+
+model_name: "hey_sara"
+
+target_phrase:
+  - "hey sara"
+
+custom_negative_phrases:
+  - "hey siri"
+  - "hey sarah"
+  - "hey zara"
+  - "hey sorry"
+  - "say ra"
+  - "hey there"
+
+n_samples: 3000
+n_samples_val: 500
+tts_batch_size: 50
+augmentation_batch_size: 16
+
+piper_sample_generator_path: "./piper-sample-generator"
+
+output_dir: "./hey_sara_output"
+
+rir_paths:
+  - "./mit_rirs"
+
+background_paths:
+  - "./background_clips"
+
+background_paths_duplication_rate:
+  - 1
+
+false_positive_validation_data_path: "./validation_set_features.npy"
+
+augmentation_rounds: 1
+
+feature_data_files:
+  "ACAV100M_sample": "./openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
+
+batch_n_per_class:
+  "ACAV100M_sample": 1024
+  "adversarial_negative": 50
+  "positive": 50
+
+model_type: "dnn"
+layer_size: 32
+
+steps: 25000
+max_negative_weight: 1500
+target_false_positives_per_hour: 0.5

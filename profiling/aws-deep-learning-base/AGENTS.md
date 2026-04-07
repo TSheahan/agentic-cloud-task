@@ -13,3 +13,9 @@ task-specific profiles (OCR, wake-word, etc.) — they layer on top.
   outbound results).
 - **Instance lifecycle**: launch, provision, run task, terminate. AMI bake
   when the task profile calls for it.
+
+## Contents
+
+| File | Role |
+|------|------|
+| [base-gpu-node.md](base-gpu-node.md) | State convergence profile: Target State / Apply / Audit for a provisioned GPU instance |
