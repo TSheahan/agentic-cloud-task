@@ -15,8 +15,8 @@ Usage:
     # Teardown only (if a previous run left resources):
     python ~/sara/hudsons-bay/orchestrate.py --teardown-only
 
-Credentials: AWS_ACCESS_KEY_ID_TRAINING, AWS_SECRET_ACCESS_KEY_TRAINING,
-AWS_DEFAULT_REGION in ~/.env
+Credentials: AWS_ACCESS_KEY_ID_CLOUD, AWS_SECRET_ACCESS_KEY_CLOUD,
+AWS_DEFAULT_REGION in project .env
 """
 
 import argparse
@@ -31,7 +31,7 @@ import paramiko
 from dotenv import load_dotenv
 from loguru import logger
 
-load_dotenv(Path.home() / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -65,8 +65,8 @@ def get_ec2_client():
     return boto3.client(
         "ec2",
         region_name=REGION,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID_TRAINING"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY_TRAINING"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID_CLOUD"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY_CLOUD"],
     )
 
 
@@ -74,8 +74,8 @@ def get_ec2_resource():
     return boto3.resource(
         "ec2",
         region_name=REGION,
-        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID_TRAINING"],
-        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY_TRAINING"],
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID_CLOUD"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY_CLOUD"],
     )
 
 
@@ -151,7 +151,7 @@ def launch_spot_instance(ec2_client, sg_id: str) -> str:
         }],
         TagSpecifications=[{
             "ResourceType": "instance",
-            "Tags": [{"Key": "Name", "Value": TAG_VALUE}, {"Key": "Project", "Value": "sara"}],
+            "Tags": [{"Key": "Name", "Value": TAG_VALUE}, {"Key": "Project", "Value": "agentic-cloud-task"}],
         }],
     )
     instance_id = resp["Instances"][0]["InstanceId"]

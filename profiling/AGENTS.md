@@ -2,10 +2,11 @@
 
 ## What This Is
 
-Accumulated cloud node provisioning cases. Each case directory contains
-profiles, and may also contain scripts, configs, and other supporting
-artifacts. Profiles follow the state convergence pattern; everything else
-is referenced from a profile or from the case's AGENTS.md.
+Accumulated provisioning profiles — local dev environment, cloud node
+setup, and task-specific cases. Each case directory contains profiles,
+and may also contain scripts, configs, and other supporting artifacts.
+Profiles follow the state convergence pattern; everything else is
+referenced from a profile or from the case's AGENTS.md.
 
 ## Pattern
 
@@ -17,11 +18,12 @@ any profile.
 
 ## Case Structure
 
-Each subdirectory is a provisioning case. `aws-deep-learning-base/` contains
-common cloud node setup that other cases layer on top of.
+Each subdirectory is a provisioning case. Dependency order:
+`local-dev-env` → `aws-deep-learning-base` → task-specific cases.
 
 | Directory | Domain |
 |-----------|--------|
+| [`local-dev-env/`](local-dev-env/AGENTS.md) | Developer workstation: project venv, AWS CLI, credentials, SSH keypair and config |
 | [`aws-deep-learning-base/`](aws-deep-learning-base/AGENTS.md) | Common cloud node provisioning: AWS Deep Learning Base GPU AMI, SSH access, agent auth, rsync tooling |
 | [`sara-wakeword/`](sara-wakeword/AGENTS.md) | OpenWakeWord model training (one-shot, AMI discarded after) |
 | [`ocr-batch/`](ocr-batch/AGENTS.md) | Repeatable OCR batch processing (AMI retained for reuse) |

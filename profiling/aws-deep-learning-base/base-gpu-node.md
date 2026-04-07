@@ -46,6 +46,12 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 - **SSH reachable** from the controlling machine.
 
+- **Per-instance SSH config entry exists** in `~/.ssh/config` (e.g.
+  `Host cloud-task-sara`), setting only `HostName` to the instance IP.
+  Connection defaults (User, IdentityFile, ephemeral-host settings) are
+  inherited from the `cloud-task-*` wildcard block established by the
+  [local dev environment profile](../local-dev-env/dev-workstation.md).
+
 - **User has an SSH profile** for the instance (agent auth, co-troubleshooting,
   monitoring, on-device agent invocation).
 
