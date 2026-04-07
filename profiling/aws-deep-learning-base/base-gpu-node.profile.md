@@ -20,9 +20,15 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 ### Instance
 
 - **A running EC2 spot instance exists** with these properties:
-  - AMI: AWS Deep Learning Base GPU AMI (OSS Nvidia Driver), Ubuntu 22.04.
+  - AMI: either the raw AWS Deep Learning Base GPU AMI or the baked base
+    image (which includes all system-state items below pre-applied).
     Region-specific AMI IDs:
-    - `ap-southeast-2`: `ami-084f512b0521b5fb4`
+    - `ap-southeast-2` (raw DL AMI): `ami-084f512b0521b5fb4`
+    - `ap-southeast-2` (baked base): `ami-081e306c4cb3f5acf`
+      Baked 2026-04-07 from `agentic-cloud-task-base-gpu-2026-04-07`.
+      Includes: apt fixes, system packages, agent CLI, project repo clone,
+      git identity. Launching from baked skips Apply steps 1–4; only
+      per-instance auth (agent OAuth, `gh auth`) is needed.
   - Instance type: `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
   - Storage: gp3 EBS, minimum 75 GB (AMI snapshot floor), delete on
     termination. The AMI consumes ~51 GB out of the box (four CUDA
@@ -42,9 +48,10 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
   - The NVIDIA apt pin in `/etc/apt/preferences.d/` is scoped to
     `Package: cuda* libnv* libnccl* libcub* nvidia* tensorrt*` (not `*`).
 
-- **System packages installed:** `python3-venv`, `git`, `ffmpeg`, `libsndfile1`.
-  (`python3-venv` is absent from the DL AMI's minimal Python — venv creation
-  fails without it.)
+- **System packages installed:** `python3-venv`, `git`, `gh`, `ffmpeg`,
+  `libsndfile1`. (`python3-venv` is absent from the DL AMI's minimal
+  Python — venv creation fails without it. `gh` enables the on-device
+  agent to interact with GitHub.)
 
 - **Python 3.10 or 3.11 is available** (the DL AMI includes both).
 
@@ -70,14 +77,27 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
     OAuth sign-in, and trust the workspace. The agent must stay up
     through the OAuth round-trip.
 
-  Once authenticated, the on-device agent reads this profile and drives
-  remaining provisioning (apt fixes, package installs) locally with
-  iterative error handling — this is more robust than scripting those
-  steps remotely.
+- **GitHub CLI authenticated.** `gh auth status` succeeds, and
+  `gh auth setup-git` has been run so HTTPS git operations use `gh` as
+  the credential helper. This lets the on-device agent push commits and
+  create PRs.
+
+  Once the agent and `gh` are authenticated, the on-device agent reads
+  this profile and drives remaining provisioning (apt fixes, package
+  installs) locally with iterative error handling — this is more robust
+  than scripting those steps remotely.
 
 ---
 
 ## Apply
+
+When launching from the **baked base AMI** (`ami-081e306c4cb3f5acf`),
+steps 1–4 are already applied. Skip to per-instance auth: agent OAuth
+(step 1 user action) and `gh auth` (step 1 gh section). Use the baked
+AMI ID in the launch command below.
+
+When launching from the **raw DL AMI** (`ami-084f512b0521b5fb4`), run all
+steps in order.
 
 ### 0. Launch spot instance
 
@@ -88,11 +108,13 @@ an SSH config entry.
 
 ```bash
 python tools/launch-spot-instance.py \
-    --ami ami-084f512b0521b5fb4 \
+    --ami <ami-id> \
     --instance-type g4dn.xlarge \
     --volume-gb 125 \
     --tag cloud-task-<name>
 ```
+
+Use `ami-081e306c4cb3f5acf` (baked) or `ami-084f512b0521b5fb4` (raw).
 
 Replace `<name>` with the task slug (e.g. `sara`, `ocr`). Ask the user,
 and offer default `base` since that is correct except in the case where
@@ -148,8 +170,20 @@ cd agentic-cloud-task && agent
 # Complete OAuth sign-in when prompted, trust the workspace
 ```
 
-Once authenticated, the agent has the profile in its workspace and can
-drive steps 2–4 locally.
+Once the agent is authenticated, it installs `gh` and the user
+authenticates it (browser-based flow, like agent OAuth):
+
+```bash
+# Agent runs:
+sudo apt install gh
+
+# User runs (in a separate SSH session or after exiting the agent):
+gh auth login -w
+gh auth setup-git
+```
+
+With both agent and `gh` authenticated, the agent can drive steps 2–4
+locally and push results to GitHub.
 
 ### 2. Fix DL AMI apt configuration
 
@@ -174,7 +208,7 @@ done
 ```bash
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    git ffmpeg libsndfile1 python3-venv
+    git gh ffmpeg libsndfile1 python3-venv
 ```
 
 ### 4. Identify Python
@@ -204,8 +238,8 @@ entry.
 ## Audit
 
 When the executor is **on the instance** (e.g. on-device agent), run checks
-**2–4** and **8** locally; **1**, **5**, and **6** require the controlling
-machine; **7** is human-verified.
+**2–4**, **8**, and **9** locally; **1**, **5**, and **6** require the
+controlling machine; **7** is human-verified.
 
 ### 1. A running EC2 spot instance exists
 
@@ -243,9 +277,9 @@ Expected: `PASS: NVIDIA pin scoped or absent`
 ### 3. System packages installed
 
 ```bash
-dpkg -l python3-venv git ffmpeg libsndfile1 2>/dev/null | grep -c '^ii'
+dpkg -l python3-venv git gh ffmpeg libsndfile1 2>/dev/null | grep -c '^ii'
 ```
-Expected: `4`
+Expected: `5`
 
 ### 4. Python 3.10 or 3.11 is available
 
@@ -301,3 +335,19 @@ Authentication check (on-instance, from the project repo directory):
 echo "harness check: respond with 'ok'" | agent -p
 ```
 Expected: `ok`
+
+### 9. GitHub CLI authenticated
+
+```bash
+gh auth status >/dev/null 2>&1 \
+    && echo "PASS: gh authenticated" \
+    || echo "FAIL: gh not authenticated"
+```
+Expected: `PASS: gh authenticated`
+
+```bash
+git config --global credential.helper 2>/dev/null | grep -q 'gh' \
+    && echo "PASS: gh credential helper configured" \
+    || echo "FAIL: gh credential helper not set"
+```
+Expected: `PASS: gh credential helper configured`
