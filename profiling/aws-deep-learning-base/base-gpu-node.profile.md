@@ -20,15 +20,15 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 ### Instance
 
 - **A running EC2 spot instance exists** with these properties:
-  - AMI: either the raw AWS Deep Learning Base GPU AMI or the baked base
+  - AMI: either the raw AWS Deep Learning Base GPU AMI or a baked base
     image (which includes all system-state items below pre-applied).
     Region-specific AMI IDs:
     - `ap-southeast-2` (raw DL AMI): `ami-084f512b0521b5fb4`
-    - `ap-southeast-2` (baked base): `ami-081e306c4cb3f5acf`
-      Baked 2026-04-07 from `agentic-cloud-task-base-gpu-2026-04-07`.
-      Includes: apt fixes, system packages, agent CLI, project repo clone,
-      git identity. Launching from baked skips Apply steps 1–4; only
-      per-instance auth (agent OAuth, `gh auth`) is needed.
+    - No baked base currently registered. Previous bake
+      (`ami-081e306c4cb3f5acf`, 2026-04-07) was deregistered — it
+      contained baked-in secrets (agent OAuth token, `gh` token, git
+      credential helper). Future bakes must run the pre-bake secrets
+      purge (Apply §5) before image creation.
   - Instance type: `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
   - Storage: gp3 EBS, minimum 75 GB (AMI snapshot floor), delete on
     termination. The AMI consumes ~51 GB out of the box (four CUDA
@@ -73,31 +73,50 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
     profile in its workspace, then set `git config user.name` and
     `user.email` in that repo to match the development workstation (see
     Apply §1).
-  - *User action*: SSH in, launch the agent inside the repo, complete
-    OAuth sign-in, and trust the workspace. The agent must stay up
-    through the OAuth round-trip.
+  - *User action*: cooperative headless auth — see the
+    [headless-auth profile](../headless-auth/headless-auth.profile.md)
+    for the full flow (agent runs `NO_OPEN_BROWSER=1 agent login`, user
+    completes OAuth in local browser).
 
 - **GitHub CLI authenticated.** `gh auth status` succeeds, and
   `gh auth setup-git` has been run so HTTPS git operations use `gh` as
   the credential helper. This lets the on-device agent push commits and
-  create PRs.
+  create PRs. The device-code flow is defined in the
+  [headless-auth profile](../headless-auth/headless-auth.profile.md).
 
   Once the agent and `gh` are authenticated, the on-device agent reads
   this profile and drives remaining provisioning (apt fixes, package
   installs) locally with iterative error handling — this is more robust
   than scripting those steps remotely.
 
+### Pre-bake image hygiene
+
+- **No secrets in bake-eligible state.** Before creating an AMI from a
+  provisioned instance, all per-instance credentials must be purged.
+  After running the secrets purge (Apply §5), the following hold:
+  - Agent CLI is logged out: `agent` is installed but not authenticated
+    (no OAuth token persisted).
+  - GitHub CLI is logged out: `gh auth status` reports no active account,
+    and `~/.config/gh/hosts.yml` contains no `oauth_token`.
+  - Git credential helper entries for `gh` are removed: no
+    `credential.https://github.com.helper` or
+    `credential.https://gist.github.com.helper` in global git config.
+  - No token env vars (`GITHUB_TOKEN`, `GH_TOKEN`) in shell rc files.
+
 ---
 
 ## Apply
 
-When launching from the **baked base AMI** (`ami-081e306c4cb3f5acf`),
-steps 1–4 are already applied. Skip to per-instance auth: agent OAuth
-(step 1 user action) and `gh auth` (step 1 gh section). Use the baked
-AMI ID in the launch command below.
+When launching from a **baked base AMI** (if one exists), steps 1–4 are
+already applied. Skip to per-instance auth: agent OAuth (step 1) and
+`gh auth` (step 1 gh section). Use the baked AMI ID in the launch
+command below.
 
 When launching from the **raw DL AMI** (`ami-084f512b0521b5fb4`), run all
 steps in order.
+
+**Before baking a new AMI**, always run step 5 (pre-bake secrets purge)
+and verify with the corresponding audit checks. No secrets in the image.
 
 ### 0. Launch spot instance
 
@@ -114,7 +133,8 @@ python tools/launch-spot-instance.py \
     --tag cloud-task-<name>
 ```
 
-Use `ami-081e306c4cb3f5acf` (baked) or `ami-084f512b0521b5fb4` (raw).
+Use the baked base AMI ID (if one exists — see Target State) or
+`ami-084f512b0521b5fb4` (raw).
 
 Replace `<name>` with the task slug (e.g. `sara`, `ocr`). Ask the user,
 and offer default `base` since that is correct except in the case where
@@ -162,25 +182,9 @@ calling agent or operator should set the same two fields in
 `user.email` from the origin (development) system — the agent can take
 those values from the environment where it was invoked.
 
-**User action** (interactive — user SSHes in):
-
-```bash
-ssh cloud-task-<name>
-cd agentic-cloud-task && agent
-# Complete OAuth sign-in when prompted, trust the workspace
-```
-
-Once the agent is authenticated, it installs `gh` and the user
-authenticates it (browser-based flow, like agent OAuth):
-
-```bash
-# Agent runs:
-sudo apt install gh
-
-# User runs (in a separate SSH session or after exiting the agent):
-gh auth login -w
-gh auth setup-git
-```
+**Auth flows** (agent + GitHub): follow the
+[headless-auth profile](../headless-auth/headless-auth.profile.md). Both
+flows are agent-initiated, user-completed via local browser.
 
 With both agent and `gh` authenticated, the agent can drive steps 2–4
 locally and push results to GitHub.
@@ -221,6 +225,55 @@ PYTHON=$(command -v python3.11 || command -v python3.10)
 echo "Using: $PYTHON ($($PYTHON --version))"
 ```
 
+### 5. Pre-bake secrets purge
+
+Run on-instance **before** creating an AMI. This strips all per-instance
+credentials so the image is safe to share or relaunch without leaking
+tokens. After bake, re-authenticate using the
+[headless-auth profile](../headless-auth/headless-auth.profile.md).
+
+**Agent logout:**
+
+```bash
+agent logout
+```
+
+**GitHub CLI logout and credential helper removal:**
+
+`gh auth logout` removes the local token but does **not** undo
+`gh auth setup-git`. The credential helper entries are URL-scoped
+(`credential.https://github.com.helper`), not the bare
+`credential.helper` — they must be removed explicitly.
+
+```bash
+gh auth logout --hostname github.com
+
+git config --global --unset-all credential.https://github.com.helper
+git config --global --unset-all credential.https://gist.github.com.helper
+```
+
+**Verify no residual tokens in gh config:**
+
+```bash
+test ! -f "$HOME/.config/gh/hosts.yml" \
+    || ! grep -q oauth_token "$HOME/.config/gh/hosts.yml"
+```
+
+If `hosts.yml` still contains an `oauth_token` line after logout, remove
+it: `rm -f "$HOME/.config/gh/hosts.yml"`.
+
+**Verify no token env vars in shell rc files:**
+
+```bash
+grep -l 'GITHUB_TOKEN\|GH_TOKEN\|GH_ENTERPRISE_TOKEN' \
+    ~/.bashrc ~/.profile ~/.bash_profile 2>/dev/null
+```
+
+If any file is listed, edit it to remove the offending export line.
+
+Run the audit checks for this item (Audit §10) before proceeding to AMI
+creation.
+
 ### Teardown
 
 Run from the controlling machine:
@@ -238,8 +291,9 @@ entry.
 ## Audit
 
 When the executor is **on the instance** (e.g. on-device agent), run checks
-**2–4**, **8**, and **9** locally; **1**, **5**, and **6** require the
-controlling machine; **7** is human-verified.
+**2–4**, **8**, **9**, and **10** locally; **1**, **5**, and **6** require
+the controlling machine; **7** is human-verified. Check **10** is only
+relevant before AMI bake.
 
 ### 1. A running EC2 spot instance exists
 
@@ -351,3 +405,56 @@ git config --global credential.helper 2>/dev/null | grep -q 'gh' \
     || echo "FAIL: gh credential helper not set"
 ```
 Expected: `PASS: gh credential helper configured`
+
+### 10. No secrets in bake-eligible state
+
+Run on-instance before AMI creation. All four checks must pass.
+
+**Agent logged out:**
+
+```bash
+echo "ping" | agent -p 2>&1 | grep -qi 'log\s*in\|auth\|sign.in\|unauthorized' \
+    && echo "PASS: agent not authenticated (login prompt detected)" \
+    || echo "INFO: agent responded — may still be authenticated; verify manually"
+```
+Expected: `PASS: agent not authenticated (login prompt detected)`
+
+**GitHub CLI logged out:**
+
+```bash
+gh auth status 2>&1 | grep -qi 'not logged' \
+    && echo "PASS: gh not authenticated" \
+    || (gh auth status >/dev/null 2>&1 \
+        && echo "FAIL: gh still authenticated" \
+        || echo "PASS: gh not authenticated")
+```
+Expected: `PASS: gh not authenticated`
+
+```bash
+if [ -f "$HOME/.config/gh/hosts.yml" ] && grep -q oauth_token "$HOME/.config/gh/hosts.yml"; then
+    echo "FAIL: oauth_token found in hosts.yml"
+else
+    echo "PASS: no oauth_token in hosts.yml"
+fi
+```
+Expected: `PASS: no oauth_token in hosts.yml`
+
+**Git credential helper entries for `gh` removed:**
+
+```bash
+git config --global --get-regexp '^credential\.' 2>/dev/null \
+    | grep -q 'gh auth git-credential' \
+    && echo "FAIL: gh credential helper still in global git config" \
+    || echo "PASS: no gh credential helper in global git config"
+```
+Expected: `PASS: no gh credential helper in global git config`
+
+**No token env vars in shell rc files:**
+
+```bash
+grep -l 'GITHUB_TOKEN\|GH_TOKEN\|GH_ENTERPRISE_TOKEN' \
+    ~/.bashrc ~/.profile ~/.bash_profile 2>/dev/null \
+    && echo "FAIL: token env var found in shell rc" \
+    || echo "PASS: no token env vars in shell rc files"
+```
+Expected: `PASS: no token env vars in shell rc files`

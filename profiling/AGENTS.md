@@ -25,6 +25,7 @@ Each subdirectory is a provisioning case. Dependency order:
 |-----------|--------|
 | [`local-dev-env/`](local-dev-env/AGENTS.md) | Developer workstation: project venv, AWS CLI, credentials, SSH keypair and config |
 | [`aws-deep-learning-base/`](aws-deep-learning-base/AGENTS.md) | Common cloud node provisioning: AWS Deep Learning Base GPU AMI, SSH access, agent auth, rsync tooling |
+| [`headless-auth/`](headless-auth/AGENTS.md) | Cooperative agent-user auth for headless nodes: Cursor agent OAuth, GitHub CLI device flow |
 | [`sara-wakeword/`](sara-wakeword/AGENTS.md) | OpenWakeWord model training (one-shot, AMI discarded after) |
 | [`ocr-batch/`](ocr-batch/AGENTS.md) | Repeatable OCR batch processing (AMI retained for reuse) |
 
