@@ -61,8 +61,9 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 - **Agent installed and authenticated.** Installation has two phases:
   - *Agentic prep* (automatable from the controlling machine via SSH):
-    install the agent CLI, add it to PATH, clone the project repo so the
-    agent has the profile in its workspace.
+    install the agent CLI (`cursor` or `agent` may appear on PATH depending
+    on install), add it to PATH, clone the project repo so the agent has the
+    profile in its workspace.
   - *User action*: SSH in, launch the agent inside the repo, complete
     OAuth sign-in, and trust the workspace. The agent must stay up
     through the OAuth round-trip.
@@ -182,6 +183,10 @@ entry.
 
 ## Audit
 
+When the executor is **on the instance** (e.g. on-device agent), run checks
+**2–4** and **8** locally; **1**, **5**, and **6** require the controlling
+machine; **7** is human-verified.
+
 ### 1. A running EC2 spot instance exists
 
 Run from the controlling machine (project venv active, `.env` populated):
@@ -257,7 +262,7 @@ profile for the instance (terminal tab, IDE remote session, or equivalent).
 Prep check (on-instance):
 
 ```bash
-command -v cursor >/dev/null 2>&1 \
+(command -v cursor >/dev/null 2>&1 || command -v agent >/dev/null 2>&1) \
     && echo "PASS: agent CLI on PATH" \
     || echo "FAIL: agent CLI not found"
 ```
