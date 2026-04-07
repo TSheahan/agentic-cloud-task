@@ -51,6 +51,10 @@ def ensure_security_group(ec2, sg_name: str) -> str:
     resp = ec2.create_security_group(
         GroupName=sg_name,
         Description="SSH access for agentic-cloud-task instances",
+        TagSpecifications=[{
+            "ResourceType": "security-group",
+            "Tags": [{"Key": "Project", "Value": "agentic-cloud-task"}],
+        }],
     )
     sg_id = resp["GroupId"]
     ec2.authorize_security_group_ingress(
@@ -62,9 +66,6 @@ def ensure_security_group(ec2, sg_name: str) -> str:
             "IpRanges": [{"CidrIp": "0.0.0.0/0", "Description": "SSH"}],
         }],
     )
-    ec2.create_tags(Resources=[sg_id], Tags=[
-        {"Key": "Project", "Value": "agentic-cloud-task"},
-    ])
     logger.info("Security group created: {} ({})", sg_name, sg_id)
     return sg_id
 
@@ -105,13 +106,16 @@ def launch_instance(
                 "DeleteOnTermination": True,
             },
         }],
-        TagSpecifications=[{
-            "ResourceType": "instance",
-            "Tags": [
-                {"Key": "Name", "Value": tag},
-                {"Key": "Project", "Value": "agentic-cloud-task"},
-            ],
-        }],
+        TagSpecifications=[
+            {
+                "ResourceType": rt,
+                "Tags": [
+                    {"Key": "Name", "Value": tag},
+                    {"Key": "Project", "Value": "agentic-cloud-task"},
+                ],
+            }
+            for rt in ("instance", "volume", "network-interface")
+        ],
     )
     instance_id = resp["Instances"][0]["InstanceId"]
     logger.info("Spot instance requested: {}", instance_id)

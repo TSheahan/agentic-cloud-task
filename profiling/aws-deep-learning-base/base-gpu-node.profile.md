@@ -24,8 +24,11 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
     Region-specific AMI IDs:
     - `ap-southeast-2`: `ami-084f512b0521b5fb4`
   - Instance type: `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
-  - Storage: gp3 EBS, sized per task (40 GB or ask user), delete on
-    termination.
+  - Storage: gp3 EBS, minimum 75 GB (AMI snapshot floor), delete on
+    termination. The AMI consumes ~51 GB out of the box (four CUDA
+    versions account for ~41 GB). 125 GB is the recommended baseline —
+    leaves ~70 GB free for base prereqs and downstream task profiles
+    that need ≥20 GB headroom. Adjust upward for data-heavy tasks.
   - Network: public IP assigned, security group allows inbound SSH (port 22).
 
 ### System state (after boot + provisioning)
@@ -56,9 +59,18 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 - **User has an SSH profile** for the instance (agent auth, co-troubleshooting,
   monitoring, on-device agent invocation).
 
-- **Agent installed and authenticated.** On first launch the agent presents an
-  OAuth code + URL; the user completes the flow while the agent remains
-  running. The agent must stay up through the OAuth round-trip.
+- **Agent installed and authenticated.** Installation has two phases:
+  - *Agentic prep* (automatable from the controlling machine via SSH):
+    install the agent CLI, add it to PATH, clone the project repo so the
+    agent has the profile in its workspace.
+  - *User action*: SSH in, launch the agent inside the repo, complete
+    OAuth sign-in, and trust the workspace. The agent must stay up
+    through the OAuth round-trip.
+
+  Once authenticated, the on-device agent reads this profile and drives
+  remaining provisioning (apt fixes, package installs) locally with
+  iterative error handling — this is more robust than scripting those
+  steps remotely.
 
 ---
 
@@ -75,18 +87,52 @@ an SSH config entry.
 python tools/launch-spot-instance.py \
     --ami ami-084f512b0521b5fb4 \
     --instance-type g4dn.xlarge \
-    --volume-gb 40 \
+    --volume-gb 125 \
     --tag cloud-task-<name>
 ```
 
-Replace `<name>` with the task slug (e.g. `sara`, `ocr`). The tool prints
-`instance_id=` and `public_ip=` on success. The SSH config entry inherits
-connection defaults from the `cloud-task-*` wildcard block established by
-the [local dev environment profile](../local-dev-env/dev-workstation.profile.md).
+Replace `<name>` with the task slug (e.g. `sara`, `ocr`). Ask the user,
+and offer default `base` since that is correct except in the case where
+multiple base builds are wanted. The tool prints `instance_id=` and
+`public_ip=` on success. The SSH config entry inherits connection
+defaults from the `cloud-task-*` wildcard block established by the
+[local dev environment profile](../local-dev-env/dev-workstation.profile.md).
 
 Adjust `--volume-gb` and `--instance-type` per task requirements.
 
-### 1. Fix DL AMI apt configuration
+**Note:** After teardown, spot vCPU quota can take ~60 seconds to
+release. Immediate relaunch may fail with `MaxSpotInstanceCountExceeded`;
+wait and retry.
+
+### 1. Install agent on instance
+
+Front-load agent access so the on-device agent can drive remaining
+provisioning with local iterative troubleshooting — more robust than
+scripting apt/package steps remotely.
+
+**Agentic prep** (run from controlling machine via SSH):
+
+```bash
+ssh cloud-task-<name> 'curl -fsSL https://cursor.com/install | bash \
+    && echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> ~/.bashrc \
+    && export PATH="$HOME/.local/bin:$PATH" \
+    && git clone https://github.com/TSheahan/agentic-cloud-task.git'
+```
+
+**User action** (interactive — user SSHes in):
+
+```bash
+ssh cloud-task-<name>
+cd agentic-cloud-task && agent
+# Complete OAuth sign-in when prompted, trust the workspace
+```
+
+Once authenticated, the agent has the profile in its workspace and can
+drive steps 2–4 locally.
+
+### 2. Fix DL AMI apt configuration
+
+Run on-instance (by the on-device agent or manually):
 
 ```bash
 # Remove duplicate NVIDIA apt source
@@ -102,7 +148,7 @@ for f in /etc/apt/preferences.d/*; do
 done
 ```
 
-### 2. Install system packages
+### 3. Install system packages
 
 ```bash
 sudo apt-get update -qq
@@ -110,7 +156,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git ffmpeg libsndfile1 python3-venv
 ```
 
-### 3. Identify Python
+### 4. Identify Python
 
 Prefer 3.11, fall back to 3.10. If neither is present, the AMI is
 not the expected Deep Learning Base — stop and diagnose.
@@ -119,14 +165,6 @@ not the expected Deep Learning Base — stop and diagnose.
 PYTHON=$(command -v python3.11 || command -v python3.10)
 echo "Using: $PYTHON ($($PYTHON --version))"
 ```
-
-### 4. SSH and agent access
-
-The user cooperates to connect an agent to the instance over SSH. Once
-the agent has a shell, it can read this profile and drive remaining
-provisioning autonomously.
-
-File transfer uses rsync over SSH (or SFTP as a fallback).
 
 ### Teardown
 
@@ -216,5 +254,25 @@ profile for the instance (terminal tab, IDE remote session, or equivalent).
 
 ### 8. Agent installed and authenticated
 
-Human-verified. The user confirms an agent is running on the instance with
-a working authenticated session.
+Prep check (on-instance):
+
+```bash
+command -v cursor >/dev/null 2>&1 \
+    && echo "PASS: agent CLI on PATH" \
+    || echo "FAIL: agent CLI not found"
+```
+Expected: `PASS: agent CLI on PATH`
+
+```bash
+test -d ~/agentic-cloud-task/.git \
+    && echo "PASS: project repo cloned" \
+    || echo "FAIL: project repo not found"
+```
+Expected: `PASS: project repo cloned`
+
+Authentication check (on-instance, from the project repo directory):
+
+```bash
+echo "harness check: respond with 'ok'" | agent -p
+```
+Expected: `ok`
