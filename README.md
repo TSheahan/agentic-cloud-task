@@ -35,6 +35,11 @@ profiling/              Cloud node provisioning cases
 cloud/                  Config-as-code for AWS (IAM policies, launch config)
 ```
 
+## Reference
+
+- [ami-bake-considerations.md](ami-bake-considerations.md) — Custom AMI
+  bake: golden image rationale, secrets, access control, rotation.
+
 ## Status
 
 Early structure. Profiles are being written; no automation tooling yet.

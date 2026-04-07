@@ -9,3 +9,9 @@ to locate the relevant area for the current task.
 | [profiling/](profiling/AGENTS.md) | Cloud node provisioning profiles — common base + per-task cases | populated |
 | [cloud/](cloud/AGENTS.md) | Config-as-code for cloud platforms (IAM policies, launch config) | declared |
 | [tools/](tools/AGENTS.md) | Shared operational utilities invoked by profile Apply/Audit steps | populated |
+
+## Top-level reference
+
+| Document | Description |
+|----------|-------------|
+| [ami-bake-considerations.md](ami-bake-considerations.md) | Custom AMI bake: golden image, secrets, strict access control, rotation |

@@ -28,6 +28,8 @@ assists with workflow execution.
   `profiling/`.
 - AWS configuration (IAM policies, etc.) is tracked as config-as-code in
   `cloud/` and applied with CLI tooling, not console actions.
+- Custom AMI bake (golden image, secrets, access control):
+  [ami-bake-considerations.md](ami-bake-considerations.md).
 
 ## Profile refinement rule
 
