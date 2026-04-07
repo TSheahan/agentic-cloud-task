@@ -109,6 +109,12 @@ agentic context) while `tools/` handles *how* (imperative implementation).
 The profile should still describe the expected behavior so an agent can
 understand the intent without reading the tool source.
 
+**`tools/_env`** is the shared environment module. It loads `.env` on
+import and exports project paths, AWS credential values, and ready-to-use
+clients (e.g. `ec2_client`). Tools and ad-hoc snippets import from it
+rather than loading credentials or constructing clients themselves. See
+`tools/AGENTS.md` for the full inventory.
+
 A complex Apply sequence (like "launch and provision a GPU instance")
 decomposes into a chain of atomic steps, each backed by a shared tool or a
 simple snippet. The profile expresses the sequence and the parameters; the
