@@ -63,7 +63,9 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
   - *Agentic prep* (automatable from the controlling machine via SSH):
     install the agent CLI (`cursor` or `agent` may appear on PATH depending
     on install), add it to PATH, clone the project repo so the agent has the
-    profile in its workspace.
+    profile in its workspace, then set `git config user.name` and
+    `user.email` in that repo to match the development workstation (see
+    Apply §1).
   - *User action*: SSH in, launch the agent inside the repo, complete
     OAuth sign-in, and trust the workspace. The agent must stay up
     through the OAuth round-trip.
@@ -119,6 +121,24 @@ ssh cloud-task-<name> 'curl -fsSL https://cursor.com/install | bash \
     && export PATH="$HOME/.local/bin:$PATH" \
     && git clone https://github.com/TSheahan/agentic-cloud-task.git'
 ```
+
+**Git identity in the cloned repo** (do this immediately after clone, before
+any commits on the instance). The goal is for commits made on the instance
+to use the same author as the development workstation (the system that
+invoked the agent).
+
+From the **controlling machine** (recommended — substitutes your local
+`git config` values into the remote repo):
+
+```bash
+ssh cloud-task-<name> "cd ~/agentic-cloud-task && git config user.name \"$(git config user.name)\" && git config user.email \"$(git config user.email)\""
+```
+
+If **clone runs on the instance** (on-device agent or manual SSH), the
+calling agent or operator should set the same two fields in
+`~/agentic-cloud-task` right after clone, using the `user.name` and
+`user.email` from the origin (development) system — the agent can take
+those values from the environment where it was invoked.
 
 **User action** (interactive — user SSHes in):
 
