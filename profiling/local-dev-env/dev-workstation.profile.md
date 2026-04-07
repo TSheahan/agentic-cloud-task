@@ -71,7 +71,7 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 - Per-instance Host entries (e.g. `Host cloud-task-sara`) are **not** owned
   by this profile — they are created by the agent or orchestration tooling
   when an instance launches, and inherit from this wildcard block. See
-  [base-gpu-node.md](../aws-deep-learning-base/base-gpu-node.md) for the
+  [base-gpu-node.profile.md](../aws-deep-learning-base/base-gpu-node.profile.md) for the
   instance-side convention.
 
 ---

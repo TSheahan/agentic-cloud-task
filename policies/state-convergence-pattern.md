@@ -92,6 +92,29 @@ multiple items, and multiple steps may contribute to one item. Each Apply
 step should make clear — via its heading or a brief note — which Target
 State item(s) it addresses.
 
+#### Atomicity and composition
+
+An Apply step should be **atomic**: it does one thing that can succeed or
+fail independently. If a step does two things that could fail independently
+(e.g. create a security group *and* launch an instance), split it. Atomic
+steps are easier to retry, easier to skip when already satisfied, and
+easier for an agent to reason about during recovery.
+
+When an action is **reusable across profiles** — "ensure a security group
+exists", "launch a spot instance", "terminate tagged instances" — it should
+be implemented as a shared tool in `tools/` and invoked from the profile's
+Apply step. The profile supplies parameters; the tool supplies the
+mechanism. This keeps profiles focused on *what* (declarative parameters,
+agentic context) while `tools/` handles *how* (imperative implementation).
+The profile should still describe the expected behavior so an agent can
+understand the intent without reading the tool source.
+
+A complex Apply sequence (like "launch and provision a GPU instance")
+decomposes into a chain of atomic steps, each backed by a shared tool or a
+simple snippet. The profile expresses the sequence and the parameters; the
+tools provide the atoms. New profiles compose existing tools rather than
+reimplementing them.
+
 ### Audit (observable)
 
 Commands that confirm the target state was reached. Each audit step includes
@@ -107,6 +130,11 @@ Guidelines:
 - Include the expected output literally so automated comparison is possible.
 - Cover every item in Target State — the 1:1 item-to-audit mapping defined
   above applies here. A missing audit check for an item is a profile gap.
+- When a check requires non-trivial logic that recurs across profiles
+  (e.g. "confirm a running EC2 instance tagged X exists"), implement it as
+  a shared tool in `tools/` with a `--check` or read-only mode, and invoke
+  it from the Audit step. The same atomicity principle from Apply applies:
+  one check, one item, independently runnable.
 
 #### Check-to-item mapping
 

@@ -8,3 +8,4 @@ to locate the relevant area for the current task.
 | [policies/](policies/AGENTS.md) | Reusable methodologies and conventions governing how work is done | populated |
 | [profiling/](profiling/AGENTS.md) | Cloud node provisioning profiles — common base + per-task cases | populated |
 | [cloud/](cloud/AGENTS.md) | Config-as-code for cloud platforms (IAM policies, launch config) | declared |
+| [tools/](tools/AGENTS.md) | Shared operational utilities invoked by profile Apply/Audit steps | populated |

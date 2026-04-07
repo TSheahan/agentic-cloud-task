@@ -8,5 +8,5 @@ node profile.
 
 | File | Role |
 |------|------|
-| [dev-workstation.md](dev-workstation.md) | State convergence profile: project venv, credentials, SSH keypair and config |
+| [dev-workstation.profile.md](dev-workstation.profile.md) | State convergence profile: project venv, credentials, SSH keypair and config |
 | [setup-aws-keypair.py](setup-aws-keypair.py) | Generate project keypair, import to AWS via boto3, print SSH config block |

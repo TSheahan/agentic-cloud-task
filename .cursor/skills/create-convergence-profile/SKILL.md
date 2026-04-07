@@ -119,5 +119,7 @@ they create false confidence.
 - If a new case directory is needed, create it with an `AGENTS.md` hub.
 - Update the parent `AGENTS.md` case table (co-committed update per
   project convention).
-- Use a durable filename (descriptive, not date-prefixed) — profiles are
-  reference material that evolves.
+- Use a durable filename with the **`.profile.md`** extension
+  (e.g. `base-gpu-node.profile.md`). This convention identifies
+  convergence profiles regardless of directory location and triggers
+  the profile refinement rule in root `AGENTS.md`.

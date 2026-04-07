@@ -18,4 +18,4 @@ task-specific profiles (OCR, wake-word, etc.) — they layer on top.
 
 | File | Role |
 |------|------|
-| [base-gpu-node.md](base-gpu-node.md) | State convergence profile: Target State / Apply / Audit for a provisioned GPU instance |
+| [base-gpu-node.profile.md](base-gpu-node.profile.md) | State convergence profile: Target State / Apply / Audit for a provisioned GPU instance |

@@ -1,7 +1,7 @@
 # OWW Training Environment — State Convergence Profile
 
 OpenWakeWord training environment for the "hey Sara" custom wake word model.
-Layers on [aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.md)
+Layers on [aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md)
 — that profile must hold before this one is applied.
 
 Follows the [state convergence pattern](../../policies/state-convergence-pattern.md).

@@ -18,7 +18,7 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 | File | Role |
 |------|------|
-| [oww-training-env.md](oww-training-env.md) | State convergence profile for the OWW training environment (Target State / Apply / Audit) |
+| [oww-training-env.profile.md](oww-training-env.profile.md) | State convergence profile for the OWW training environment (Target State / Apply / Audit) |
 
 ### Reference
 

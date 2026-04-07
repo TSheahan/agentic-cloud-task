@@ -51,7 +51,7 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
   `Host cloud-task-sara`), setting only `HostName` to the instance IP.
   Connection defaults (User, IdentityFile, ephemeral-host settings) are
   inherited from the `cloud-task-*` wildcard block established by the
-  [local dev environment profile](../local-dev-env/dev-workstation.md).
+  [local dev environment profile](../local-dev-env/dev-workstation.profile.md).
 
 - **User has an SSH profile** for the instance (agent auth, co-troubleshooting,
   monitoring, on-device agent invocation).
@@ -63,6 +63,28 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 ---
 
 ## Apply
+
+### 0. Launch spot instance
+
+Run from the controlling machine (project venv active, `.env` populated).
+Creates the security group if absent, launches a spot instance with the
+parameters from Target State, waits for it to reach `running`, and writes
+an SSH config entry.
+
+```bash
+python tools/launch-spot-instance.py \
+    --ami ami-084f512b0521b5fb4 \
+    --instance-type g4dn.xlarge \
+    --volume-gb 40 \
+    --tag cloud-task-<name>
+```
+
+Replace `<name>` with the task slug (e.g. `sara`, `ocr`). The tool prints
+`instance_id=` and `public_ip=` on success. The SSH config entry inherits
+connection defaults from the `cloud-task-*` wildcard block established by
+the [local dev environment profile](../local-dev-env/dev-workstation.profile.md).
+
+Adjust `--volume-gb` and `--instance-type` per task requirements.
 
 ### 1. Fix DL AMI apt configuration
 
@@ -106,17 +128,32 @@ provisioning autonomously.
 
 File transfer uses rsync over SSH (or SFTP as a fallback).
 
-### Teardown notes
+### Teardown
 
-- Instance termination may leave the security group in a
-  `DependencyViolation` state for a brief window. Retry SG deletion
-  after a short delay, or clean up manually in the console if it persists.
+Run from the controlling machine:
+
+```bash
+python tools/teardown-instance.py --tag cloud-task-<name>
+```
+
+Terminates the instance, waits for termination, deletes the security
+group (retries on `DependencyViolation`), and removes the SSH config
+entry.
 
 ---
 
 ## Audit
 
 ### 1. A running EC2 spot instance exists
+
+Run from the controlling machine (project venv active, `.env` populated):
+
+```bash
+python tools/launch-spot-instance.py --tag cloud-task-<name> --check
+```
+Expected: `PASS: running instance i-... @ <ip> (tag=cloud-task-<name>)`
+
+On-instance confirmation (once SSH is up):
 
 ```bash
 nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null

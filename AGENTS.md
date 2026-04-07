@@ -21,7 +21,7 @@ assists with workflow execution.
 
 ## Profile refinement rule
 
-When an agent reads or edits any file in `profiling/`, it should load the
+When an agent reads or edits any `*.profile.md` file, it should load the
 [state convergence pattern](policies/state-convergence-pattern.md) if it
 hasn't already. Profile refinement is **inline with the work, not trailing.**
 When a step reveals a new constraint, corrects a wrong assumption, or
@@ -50,6 +50,11 @@ same commit.
 ## Naming conventions
 
 - **Directories:** lowercase hyphenated slugs (`sara-wakeword`, `ocr-batch`)
+- **Profiles:** `*.profile.md` (`base-gpu-node.profile.md`,
+  `dev-workstation.profile.md`) — state convergence profiles following the
+  three-section pattern. The `.profile.md` suffix is the machine-readable
+  marker; it triggers the profile refinement rule above regardless of
+  where the file lives.
 - **Durable files:** descriptive names (`iam-policy-ec2-basic.json`,
   `account-structure.md`) — reference material that evolves but persists.
 - **Temporal files:** `YYYY-MM-DD_slug.md` (`2026-04-07_training-run-log.md`)
