@@ -15,44 +15,46 @@ All paths below are relative to the working directory on the instance
 
 ### Python environment
 
-- A venv exists (created from the Python 3.10 or 3.11 identified by the
-  base profile).
-- `openwakeword` is installed in editable mode with the `[full]` extra.
+- **A Python venv exists** (created from the Python 3.10 or 3.11 identified
+  by the base profile).
+- **`openwakeword` is installed** in editable mode with the `[full]` extra.
 - **NumPy is version 1.x** (`numpy<2`). PyTorch 1.13.1 and torchmetrics
   crash under NumPy 2.x. The pin must be applied *after* OWW install
   because `pip install -e ".[full]"` may pull NumPy 2.
-- `huggingface_hub` is installed (used for data downloads).
+- **`huggingface_hub` is installed** (used for data downloads).
 
 ### Repositories
 
-- `openwakeword/` — clone of `https://github.com/dscripka/openWakeWord.git`
-- `piper-sample-generator/` — clone of
-  `https://github.com/dscripka/piper-sample-generator.git`
+- **Required repositories are cloned:**
+  - `openwakeword/` — from `https://github.com/dscripka/openWakeWord.git`
+  - `piper-sample-generator/` — from
+    `https://github.com/dscripka/piper-sample-generator.git`
 
 ### Training data
 
-- `validation_set_features.npy` — false-positive validation features from
-  HuggingFace (`davidscripka/openwakeword_features`, filename
-  `validation_set_features.npy`). **Not** `openwakeword_features.npy` —
-  that filename was renamed upstream and returns 404.
-- `openwakeword_features_ACAV100M_2000_hrs_16bit.npy` — negative feature
-  data from the same HF dataset.
-- `mit_rirs/` — MIT Room Impulse Responses (WAV files). Optional for a
-  first pass; training proceeds without RIRs but reverb augmentation is
-  skipped.
-- `background_clips/` — background audio for false-positive training. A
-  minimal placeholder (60s silence WAV) is sufficient for a first pass.
+- **Training data files are present:**
+  - `validation_set_features.npy` — false-positive validation features from
+    HuggingFace (`davidscripka/openwakeword_features`, filename
+    `validation_set_features.npy`). **Not** `openwakeword_features.npy` —
+    that filename was renamed upstream and returns 404.
+  - `openwakeword_features_ACAV100M_2000_hrs_16bit.npy` — negative feature
+    data from the same HF dataset.
+  - `mit_rirs/` — MIT Room Impulse Responses (WAV files). Optional for a
+    first pass; training proceeds without RIRs but reverb augmentation is
+    skipped.
+  - `background_clips/` — background audio for false-positive training. A
+    minimal placeholder (60s silence WAV) is sufficient for a first pass.
 
 ### Training config
 
-- `hey_sara_model.yml` is present in the working directory. All relative
+- **`hey_sara_model.yml` is present** in the working directory. All relative
   paths in the YAML (`./piper-sample-generator`, `./validation_set_features.npy`,
   `./hey_sara_output`, etc.) resolve from the working directory.
 
 ### Post-training output
 
-- `hey_sara_output/hey_sara.onnx` exists and is a valid ONNX model loadable
-  by `openwakeword.model.Model`.
+- **`hey_sara_output/hey_sara.onnx` exists** and is a valid ONNX model
+  loadable by `openwakeword.model.Model`.
 
 ---
 
@@ -177,28 +179,48 @@ Transfer the ONNX file back to the controlling machine via rsync/SFTP.
 
 ## Audit
 
+### 1. A Python venv exists
+
 ```bash
-# 1. OWW importable
+[ -d venv ] && venv/bin/python --version 2>/dev/null \
+    && echo "PASS: venv exists and python works" \
+    || echo "FAIL: venv missing or broken"
+```
+Expected: `Python 3.x.x` followed by `PASS: venv exists and python works`
+
+### 2. `openwakeword` is installed
+
+```bash
 python -c "import openwakeword; print('PASS: openwakeword importable')"
 ```
 Expected: `PASS: openwakeword importable`
 
+### 3. NumPy is version 1.x
+
 ```bash
-# 2. NumPy version < 2
 python -c "import numpy; v=int(numpy.__version__.split('.')[0]); print(f'numpy {numpy.__version__}'); assert v < 2, 'FAIL: numpy 2.x'"
 ```
 Expected: `numpy 1.x.x`
 
+### 4. `huggingface_hub` is installed
+
 ```bash
-# 3. Repos present
+python -c "import huggingface_hub; print('PASS: huggingface_hub importable')"
+```
+Expected: `PASS: huggingface_hub importable`
+
+### 5. Required repositories are cloned
+
+```bash
 [ -d openwakeword ] && [ -d piper-sample-generator ] \
     && echo "PASS: repos cloned" \
     || echo "FAIL: repos missing"
 ```
 Expected: `PASS: repos cloned`
 
+### 6. Training data files are present
+
 ```bash
-# 4. Training data files
 [ -f validation_set_features.npy ] \
     && [ -f openwakeword_features_ACAV100M_2000_hrs_16bit.npy ] \
     && echo "PASS: training data present" \
@@ -206,16 +228,18 @@ Expected: `PASS: repos cloned`
 ```
 Expected: `PASS: training data present`
 
+### 7. `hey_sara_model.yml` is present
+
 ```bash
-# 5. Training config resolvable
 [ -f hey_sara_model.yml ] \
     && echo "PASS: training config present" \
     || echo "FAIL: training config missing"
 ```
 Expected: `PASS: training config present`
 
+### 8. `hey_sara_output/hey_sara.onnx` exists
+
 ```bash
-# 6. ONNX output exists and is loadable (post-training)
 python -c "
 from openwakeword.model import Model
 m = Model(wakeword_model_paths=['hey_sara_output/hey_sara.onnx'])

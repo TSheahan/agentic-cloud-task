@@ -166,44 +166,109 @@ Not required for profile execution — boto3 handles all programmatic access._
 
 ## Audit
 
+### 1. Python 3.x is available
+
 ```bash
-# 1. Venv and packages
+python --version
+```
+Expected: `Python 3.x.x`
+
+### 2. `requirements.txt` exists
+
+```bash
+test -f requirements.txt && echo "PASS: requirements.txt present" || echo "FAIL: requirements.txt missing"
+```
+Expected: `PASS: requirements.txt present`
+
+### 3. `venv/` exists
+
+```bash
+test -d venv && echo "PASS: venv directory exists" || echo "FAIL: venv missing"
+```
+Expected: `PASS: venv directory exists`
+
+### 4. All packages in `requirements.txt` are installed
+
+```bash
 python -c "import boto3, paramiko, dotenv, loguru; print('PASS: project deps importable')"
 ```
 Expected: `PASS: project deps importable`
 
-```bash
-# 2. Credentials loadable
-python -c "from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('.env')); import os; assert os.environ.get('AWS_ACCESS_KEY_ID_CLOUD'), 'missing'; print('PASS: credentials loadable')"
-```
-Expected: `PASS: credentials loadable`
+### 5. IAM policy `agentic-cloud-task-automation` exists
+
+Not automatically verifiable — the automation user's permissions do not
+include IAM read access. Verified indirectly: if check 7 (active access
+key) succeeds and EC2 operations work, the policy is attached.
+
+### 6. IAM user `agentic-cloud-task-automation` exists
+
+Verified by check 7 below — STS GetCallerIdentity confirms the user ARN.
+
+### 7. An active access key exists
 
 ```bash
-# 3. AWS identity (via boto3)
 python -c "from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('.env')); import os, boto3; sts=boto3.client('sts', region_name=os.environ['AWS_DEFAULT_REGION'], aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID_CLOUD'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY_CLOUD']); print('PASS:', sts.get_caller_identity()['Arn'])"
 ```
-Expected: `PASS: arn:aws:iam::...:user/...`
+Expected: `PASS: arn:aws:iam::...:user/agentic-cloud-task-automation`
+
+### 8. `aws` command is available
+
+### 9. `aws --version` returns AWS CLI v2
+
+Checks 8 + 9 share a single command (optional item):
 
 ```bash
-# 4. AWS CLI (optional)
 aws --version
 ```
 Expected: `aws-cli/2.x.x ...` (if installed)
 
+### 10. `.env` exists
+
 ```bash
-# 5. SSH keypair exists locally
-test -f .keys/cloud-task.pem && test -f .keys/cloud-task.pem.pub && echo "PASS: keypair present" || echo "FAIL: keypair missing"
+python -c "from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('.env')); import os; assert os.environ.get('AWS_ACCESS_KEY_ID_CLOUD'), 'missing'; print('PASS: credentials loadable')"
+```
+Expected: `PASS: credentials loadable`
+
+### 11. `.env` is gitignored
+
+```bash
+git check-ignore .env && echo "PASS: .env is gitignored" || echo "FAIL: .env not gitignored"
+```
+Expected: `PASS: .env is gitignored`
+
+### 12. `.env.example` exists
+
+```bash
+test -f .env.example && echo "PASS: .env.example present" || echo "FAIL: .env.example missing"
+```
+Expected: `PASS: .env.example present`
+
+### 13. `.keys/` directory exists
+
+```bash
+test -d .keys && echo "PASS: .keys directory exists" || echo "FAIL: .keys missing"
+```
+Expected: `PASS: .keys directory exists`
+
+### 14. A project-global keypair exists
+
+```bash
+test -f .keys/cloud-task.pem && test -f .keys/cloud-task.pem.pub \
+    && echo "PASS: keypair present" \
+    || echo "FAIL: keypair missing"
 ```
 Expected: `PASS: keypair present`
 
+### 15. The public key is imported to AWS
+
 ```bash
-# 6. SSH keypair imported to AWS
 python -c "from dotenv import load_dotenv; from pathlib import Path; load_dotenv(Path('.env')); import os, boto3; ec2=boto3.client('ec2', region_name=os.environ['AWS_DEFAULT_REGION'], aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID_CLOUD'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY_CLOUD']); kp=ec2.describe_key_pairs(KeyNames=['cloud-task']); print('PASS: key pair in AWS, fingerprint:', kp['KeyPairs'][0]['KeyFingerprint'])"
 ```
 Expected: `PASS: key pair in AWS, fingerprint: ...`
 
+### 16. `~/.ssh/config` contains a wildcard Host block
+
 ```bash
-# 7. SSH config wildcard block
 ssh -G cloud-task-test 2>/dev/null | grep -i identityfile
 ```
 Expected: line containing `.keys/cloud-task.pem`

@@ -17,15 +17,16 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 - IAM policy includes `ec2:CreateTags` and `iam:CreateServiceLinkedRole` for
   `spot.amazonaws.com`. See `cloud/iam-policy-ec2-basic.json`.
 
-### Instance properties
+### Instance
 
-- **AMI:** AWS Deep Learning Base GPU AMI (OSS Nvidia Driver), Ubuntu 22.04.
-  Region-specific AMI IDs:
-  - `ap-southeast-2`: `ami-084f512b0521b5fb4`
-- **Instance type:** `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
-- **Storage:** gp3 EBS, sized per task (40 GB or ask user), delete on
-  termination.
-- **Network:** public IP assigned, security group allows inbound SSH (port 22).
+- **A running EC2 spot instance exists** with these properties:
+  - AMI: AWS Deep Learning Base GPU AMI (OSS Nvidia Driver), Ubuntu 22.04.
+    Region-specific AMI IDs:
+    - `ap-southeast-2`: `ami-084f512b0521b5fb4`
+  - Instance type: `g4dn.xlarge` (T4, 16 GB VRAM) or larger as task requires.
+  - Storage: gp3 EBS, sized per task (40 GB or ask user), delete on
+    termination.
+  - Network: public IP assigned, security group allows inbound SSH (port 22).
 
 ### System state (after boot + provisioning)
 
@@ -115,8 +116,16 @@ File transfer uses rsync over SSH (or SFTP as a fallback).
 
 ## Audit
 
+### 1. A running EC2 spot instance exists
+
 ```bash
-# 1. No duplicate NVIDIA apt source
+nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null
+```
+Expected: GPU name (e.g. `Tesla T4`)
+
+### 2. NVIDIA apt sources are clean
+
+```bash
 test ! -f /etc/apt/sources.list.d/archive_uri-https_developer_download_nvidia_com_compute_cuda_repos_ubuntu2204_x86_64_-jammy.list \
     && echo "PASS: no duplicate NVIDIA source" \
     || echo "FAIL: duplicate NVIDIA source still present"
@@ -124,7 +133,6 @@ test ! -f /etc/apt/sources.list.d/archive_uri-https_developer_download_nvidia_co
 Expected: `PASS: no duplicate NVIDIA source`
 
 ```bash
-# 2. NVIDIA apt pin scoped (not wildcard)
 grep -r 'Package: \*' /etc/apt/preferences.d/ 2>/dev/null \
     | grep -q 'NVIDIA' \
     && echo "FAIL: wildcard NVIDIA pin still present" \
@@ -132,20 +140,44 @@ grep -r 'Package: \*' /etc/apt/preferences.d/ 2>/dev/null \
 ```
 Expected: `PASS: NVIDIA pin scoped or absent`
 
+### 3. System packages installed
+
 ```bash
-# 3. System packages
 dpkg -l python3-venv git ffmpeg libsndfile1 2>/dev/null | grep -c '^ii'
 ```
 Expected: `4`
 
+### 4. Python 3.10 or 3.11 is available
+
 ```bash
-# 4. Python version
 python3.11 --version 2>/dev/null || python3.10 --version 2>/dev/null
 ```
 Expected: `Python 3.11.x` or `Python 3.10.x`
 
+### 5. SSH reachable
+
+Run from the controlling machine (not the instance):
+
 ```bash
-# 5. GPU visible
-nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null
+ssh -o ConnectTimeout=5 cloud-task-<name> echo "PASS: SSH reachable"
 ```
-Expected: GPU name (e.g. `Tesla T4`)
+Expected: `PASS: SSH reachable`
+
+### 6. Per-instance SSH config entry exists
+
+Run from the controlling machine:
+
+```bash
+ssh -G cloud-task-<name> 2>/dev/null | grep -i hostname
+```
+Expected: line containing the instance's public IP
+
+### 7. User has an SSH profile
+
+Human-verified. The user confirms they have an interactive SSH session
+profile for the instance (terminal tab, IDE remote session, or equivalent).
+
+### 8. Agent installed and authenticated
+
+Human-verified. The user confirms an agent is running on the instance with
+a working authenticated session.

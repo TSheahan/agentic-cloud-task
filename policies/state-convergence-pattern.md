@@ -38,6 +38,25 @@ Guidelines:
 - Each property should be independently verifiable.
 - Include version constraints where they matter.
 
+#### Item structure
+
+Target State is an **enumeration of items**. An item is the atomic unit of
+the profile — it is what gets audited, what gets tracked during execution,
+and what an agent uses to answer "is this done?"
+
+**Marker convention:** an item is a bold-prefixed bullet (`- **Claim...**`).
+Everything else in Target State is structure or supporting detail:
+
+- **H3 headings** within Target State are organizational groupers. They
+  improve readability but are not items and do not affect the item count.
+- **Sub-bullets and non-bold bullets** under an item are supporting detail
+  (parameter values, reference data, config snippets). They elaborate the
+  parent item but are not tracked separately.
+
+Each item maps 1:1 to an Audit check: if an item has no corresponding Audit
+check, that is a gap to fill. During execution each item also maps to one
+tracking unit (e.g. a TODO), giving a concrete tally of convergence progress.
+
 ### Apply (imperative + agentic)
 
 The happy path: steps to reach the target state from a clean baseline. This
@@ -65,6 +84,14 @@ benefit from judgment get natural language. The boundary is practical, not
 dogmatic — use whichever mode communicates the intent most clearly and
 executes most reliably.
 
+#### Relationship to items
+
+Apply steps are not required to map 1:1 to Target State items. Apply
+follows execution order, which is often many-to-many: one step may address
+multiple items, and multiple steps may contribute to one item. Each Apply
+step should make clear — via its heading or a brief note — which Target
+State item(s) it addresses.
+
 ### Audit (observable)
 
 Commands that confirm the target state was reached. Each audit step includes
@@ -78,7 +105,22 @@ state.
 Guidelines:
 - Audit commands must be safe to re-run (read-only, no side effects).
 - Include the expected output literally so automated comparison is possible.
-- Cover every property in the Target State section.
+- Cover every item in Target State — the 1:1 item-to-audit mapping defined
+  above applies here. A missing audit check for an item is a profile gap.
+
+#### Check-to-item mapping
+
+The 1:1 mapping between items and audit checks is structural:
+
+- Each audit check corresponds to exactly one Target State item, and each
+  item has exactly one audit check. This is a mapping rule, not a complexity
+  constraint — a single check can be compound (multiple commands, sequential
+  code blocks, multi-step verification) if the item requires it.
+- Each check is introduced by a comment or heading that names the Target
+  State item it verifies, making the mapping traceable.
+- The boundary between checks is the item boundary. A profile with N items
+  has N audit checks, regardless of how many code blocks each contains
+  internally.
 
 ## How the sections interact
 
