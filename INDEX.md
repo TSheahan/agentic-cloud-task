@@ -14,4 +14,4 @@ to locate the relevant area for the current task.
 
 | Document | Description |
 |----------|-------------|
-| [ami-bake-considerations.md](ami-bake-considerations.md) | Custom AMI bake: golden image, secrets, strict access control, rotation |
+| [cloud-resources.example.md](cloud-resources.example.md) | Template for the cloud resources catalog (nodes, AMIs). Copy to `cloud-resources.md` (gitignored) for live use. |
