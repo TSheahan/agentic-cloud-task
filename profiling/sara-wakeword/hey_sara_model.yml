@@ -1,11 +1,15 @@
-# OpenWakeWord training config — Hudson's Bay first pass for "hey Sara"
+# OpenWakeWord training config — "hey Sara" (Cartesia-first happy path)
 #
-# Minimal viable config: low sample count, default Piper TTS, small model.
-# Goal: prove the pipeline produces a loadable hey_sara.onnx, not quality.
+# Positive and adversarial-negative WAVs are pre-generated (Cartesia preferred)
+# and placed under output_dir/model_name/{positive_train,positive_test,
+# negative_train,negative_test}/ before running train without --generate_clips.
 #
-# Run from hudsons-bay directory on AWS with:
+# piper_sample_generator_path points at oww_train_shim/ so train.py can import
+# generate_samples without cloning Piper; see oww-training-env.profile.md.
+#
+# Run from WORKDIR on the GPU instance:
 #   python -m openwakeword.train --training_config hey_sara_model.yml \
-#       --generate_clips --augment_clips --train_model
+#       --augment_clips --train_model
 
 model_name: "hey_sara"
 
@@ -25,7 +29,7 @@ n_samples_val: 500
 tts_batch_size: 50
 augmentation_batch_size: 16
 
-piper_sample_generator_path: "./piper-sample-generator"
+piper_sample_generator_path: "./oww_train_shim"
 
 output_dir: "./hey_sara_output"
 

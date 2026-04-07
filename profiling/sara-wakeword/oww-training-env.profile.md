@@ -10,6 +10,13 @@ if the workflow needs `agent` or `gh` on the instance.
 
 Follows the [state convergence pattern](../../policies/state-convergence-pattern.md).
 
+**Happy path:** pre-generate positive and adversarial-negative WAVs with **Cartesia**
+(preferred single cloud TTS) via [`generate_samples.py`](generate_samples.py) on a
+machine with API keys, rsync them into the layout under `hey_sara_output/<model_name>/`,
+then run **`openwakeword.train`** **without** `--generate_clips`. **Piper** (upstream
+OWW’s built-in TTS path) is **deprecated** here — full steps live in **Appendix A
+(deprecated Piper fallback)** only if an agent must re-enable Piper generation.
+
 ---
 
 ## Target State
@@ -26,34 +33,25 @@ These items specialize the [base GPU node](../aws-deep-learning-base/base-gpu-no
 
 - **WORKDIR is named, recorded in `cloud-resources.md`, created on the instance, and uses durable storage by default.** The **Nodes** table **WORKDIR** column for this node's **SSH Host** contains the **absolute path** to the OWW training root (the same directory Apply uses for `mkdir` / `cd`). **Primary spec:** that path lives on **root EBS** (e.g. `/home/ubuntu/oww-work`) so mutable state survives **stop → start** of the same instance; it is still subject to **terminate** and teardown policy. **Additionally, when instance-store NVMe is available** (e.g. DL AMI mount at `/opt/dlami/nvme`), WORKDIR may be placed under that mount for sequential I/O; record the **actual** absolute path in **`cloud-resources.md`** and treat the mount as **ephemeral** per AWS instance-store semantics—**rsync** irreplaceable artifacts to durable storage or off-node before terminate, and do not keep sole copies only on instance store.
 
-### Working directory and capacity
+### Working directory
 
-- **WORKDIR is a flat directory on the instance with the core sibling paths, and is not inside the project repo clone.** At minimum, `hey_sara_model.yml`, `openwakeword/`, `piper-sample-generator/`, and `venv/` are direct children of `WORKDIR`. Downloaded `.npy` files and `hey_sara_output/` appear in the same directory as downloads and training complete (see Training data and Post-training items). Copy `hey_sara_model.yml` into `WORKDIR` at setup; read this profile from the repo clone. The repo clone is read-only context (profiles, config YAML); mutable state lives only in `WORKDIR`. The cataloged path and storage class are defined in **Instance, SSH, auth, and cataloged WORKDIR** above.
-- **At least ~25 GB free space** is available on the filesystem that contains `WORKDIR` before large downloads and training (the ACAV negative-features `.npy` alone is ~17 GB; venv, Piper checkpoint, and artifacts add more).
+- **WORKDIR is a flat directory on the instance with the core sibling paths, and is not inside the project repo clone.** At minimum, `hey_sara_model.yml`, `openwakeword/`, `venv/`, and **`oww_train_shim/`** (import shim for upstream `train.py`; see `hey_sara_model.yml` `piper_sample_generator_path`) are direct children of `WORKDIR`. Downloaded `.npy` files and the `hey_sara_output/` tree (including pre-synced WAV subdirs) appear as training proceeds. Copy `hey_sara_model.yml` and the shim tree from the repo; read this profile from the repo clone. Mutable state lives only in `WORKDIR`. The cataloged path and storage class are defined in **Instance, SSH, auth, and cataloged WORKDIR** above.
 
-### System (clip generation)
+### Synthetic clips (Cartesia happy path)
 
-- **System package `libespeak-ng1` is installed.** The Python package `espeak-phonemizer` loads `libespeak-ng.so.1` via ctypes; without the distro library, `--generate_clips` fails at phonemization even when the Piper `.pt` model is present.
+- **Positive and adversarial-negative training WAVs are pre-placed** under `hey_sara_output/<model_name>/` in **`positive_train/`**, **`positive_test/`**, **`negative_train/`**, and **`negative_test/`** (defaults: `model_name` **`hey_sara`**, `output_dir` **`./hey_sara_output`** in `hey_sara_model.yml`). Each directory holds enough **`*.wav`** files for **`openwakeword.train`** to run **without** `--generate_clips` (upstream still imports `generate_samples` from `piper_sample_generator_path`; the shim **`./oww_train_shim`** satisfies that import and **must not** be invoked). **Preferred generator:** **Cartesia** — [`generate_samples.py`](generate_samples.py) with **`--backend cartesia`** (default). **One cloud provider** on the happy path; keep ElevenLabs/Deepgram as optional swaps in that script, not mixed targets in the same profile run. Positives: phrase **`hey Sara`** (see YAML `target_phrase`). Negatives: phrases aligned with `custom_negative_phrases` (see [`adversarial_phrases.example.txt`](adversarial_phrases.example.txt)); use **`--phrases-file`**. Counts must meet or exceed the **`n_samples`** / **`n_samples_val`** intent in `hey_sara_model.yml` (upstream uses a ~0.95 threshold when generation runs; pre-placing clips should match those totals so augmentation and training see a full set).
 
 ### Python environment
 
 - **A Python venv exists** (created from the Python 3.10 or 3.11 identified by the base profile).
 - **`openwakeword` is installed** in editable mode with the `[full]` extra, and **`import openwakeword.train`** (or another submodule) resolves to the real package — not only an empty top-level namespace. The working directory usually contains a git clone at `./openwakeword/`; on `sys.path`, a bare `import openwakeword` from the parent directory can bind to a namespace over that tree and omit `FEATURE_MODELS`, breaking `download_models()`. Use **`python -m openwakeword.train` from `WORKDIR`**, or `import openwakeword.train`, or **`cd openwakeword`** before ad-hoc scripts. Audits use submodule imports for this reason.
 - **OpenWakeWord feature models are present** under `openwakeword/openwakeword/resources/models/` — at minimum `melspectrogram.onnx` and `embedding_model.onnx`. These are not in the git clone; fetch them with `openwakeword.utils.download_models()` (GitHub release assets). Training fails at “Computing openwakeword features” if they are missing.
-- **NumPy is version 1.x** (`numpy<2`). PyTorch 1.13.1 and torchmetrics crash under NumPy 2.x. Re-apply `pip install "numpy<2"` after `pip install -r piper-sample-generator/requirements.txt` — that file lists unpinned `numpy`, and pip may upgrade NumPy to 2.x.
+- **NumPy is version 1.x** (`numpy<2`). PyTorch 1.13.1 and torchmetrics crash under NumPy 2.x. After **`pip install -e ".[full]"`**, keep **`pip install "numpy<2"`**; re-apply if any later `pip install` upgrades NumPy.
 - **`huggingface_hub` is installed** (used for data downloads).
-
-### Piper clip generation
-
-- **Piper sample generation is provisioned for `--generate_clips`:**
-  - Python: `webrtcvad` and `espeak_phonemizer` (from PyPI as `espeak-phonemizer`) — satisfied by `pip install -r piper-sample-generator/requirements.txt` in the training venv, with **`numpy<2` re-applied afterward**.
-  - Voice model: `piper-sample-generator/models/en-us-libritts-high.pt` and companion `en-us-libritts-high.pt.json`. The `.pt` is gitignored upstream; download from the [rhasspy Piper sample-generator release](https://github.com/rhasspy/piper-sample-generator/releases/download/v1.0.0/en-us-libritts-high.pt) (see `piper-sample-generator/README.md`).
 
 ### Repositories
 
-- **Required repositories are cloned:**
-  - `openwakeword/` — from `https://github.com/dscripka/openWakeWord.git`
-  - `piper-sample-generator/` — from `https://github.com/dscripka/piper-sample-generator.git`
+- **The `openwakeword` repository is cloned** from `https://github.com/dscripka/openWakeWord.git`. (The **`piper-sample-generator`** repo is **not** part of the happy path; see Appendix A if needed.)
 
 ### Training data
 
@@ -67,7 +65,7 @@ Optional: set `HF_TOKEN` when downloading from HuggingFace to improve rate limit
 
 ### Training config
 
-- **`hey_sara_model.yml` is present** in the working directory. All relative paths in the YAML (`./piper-sample-generator`, `./validation_set_features.npy`, `./hey_sara_output`, etc.) resolve from the working directory.
+- **`hey_sara_model.yml` is present** in the working directory. All relative paths in the YAML (`./oww_train_shim`, `./validation_set_features.npy`, `./hey_sara_output`, etc.) resolve from the working directory.
 
 ### Post-training output
 
@@ -97,7 +95,7 @@ python tools/launch-spot-instance.py \
     --instance-initiated-shutdown-behavior stop
 ```
 
-Align with Target State: **stop** (not terminate) on guest OS shutdown (`--instance-initiated-shutdown-behavior stop`, tool default); **do not** pass **`--persist-root-volume`** (unless you document an exception in **`cloud-resources.md`**) so the root volume **deletes on instance termination**; size **`--volume-gb`** for the ~25 GB+ headroom item in Target State. Use **`--market-type on-demand`** to avoid spot reclaim mid-run, or **`--market-type spot`** for cost with appropriate **`--spot-interruption-behavior`**.
+Align with Target State: **stop** (not terminate) on guest OS shutdown (`--instance-initiated-shutdown-behavior stop`, tool default); **do not** pass **`--persist-root-volume`** (unless you document an exception in **`cloud-resources.md`**) so the root volume **deletes on instance termination**. **Disk headroom is fixed at launch:** choose **`--volume-gb`** so the root filesystem still has enough *free* space after the DL AMI baseline (see [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) storage notes) for the large ACAV negative-features `.npy` (~17 GB), the venv, and training artifacts — the example below uses **`80`**. Use **`--market-type on-demand`** to avoid spot reclaim mid-run, or **`--market-type spot`** for cost with appropriate **`--spot-interruption-behavior`**.
 
 See **`python tools/launch-spot-instance.py --help`** for all flags (`--spot-interruption-behavior`,
 `--ssh-host-alias`, `--no-ssh-config`, etc.).
@@ -105,7 +103,7 @@ See **`python tools/launch-spot-instance.py --help`** for all flags (`--spot-int
 Update **`cloud-resources.md`** in the same session (per root [AGENTS.md](../../AGENTS.md)):
 add or refresh the **Nodes** row (**Name**, **SSH Host**, **Instance ID**, **Public IP**,
 **Region**, **Type**, **Status**, **Notes**). Leave **WORKDIR** empty or placeholder until
-Apply §3 sets the path; update **SSH (current)** with usable commands for the **Host**
+Apply §2 sets the path; update **SSH (current)** with usable commands for the **Host**
 that matches **`cloud-task-<slug>`** (default **`cloud-task-sara`**).
 
 SSH to the node and converge **[aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md)**
@@ -119,16 +117,7 @@ Assumes the base GPU node profile already holds (apt fixed, system packages
 installed, Python identified). Run the remaining commands **on the instance** from
 the chosen **working directory** (`WORKDIR` below).
 
-### 2. System library for Piper phonemization
-
-Not included in the default base GPU package set; install on the instance if missing:
-
-```bash
-sudo apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libespeak-ng1
-```
-
-### 3. Choose `WORKDIR` and create venv
+### 2. Choose `WORKDIR` and create venv
 
 **Default (Target State):** use **durable root EBS** — not instance-store NVMe —
 unless you explicitly accept ephemeral storage for speed. Set **`REPOROOT`** to the
@@ -145,6 +134,7 @@ WORKDIR=/home/ubuntu/oww-work
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 cp "$REPOROOT/profiling/sara-wakeword/hey_sara_model.yml" .
+cp -r "$REPOROOT/profiling/sara-wakeword/oww_train_shim" .
 PYTHON=${PYTHON:-$(command -v python3.11 || command -v python3.10)}
 $PYTHON -m venv venv
 source venv/bin/activate
@@ -156,14 +146,13 @@ for this instance's **SSH Host** row to the absolute path (`pwd -P` on the node
 from this directory). If **`WORKDIR`** is under **`/opt/dlami/nvme`**, add a
 **Notes** flag that training state is on **instance store** (ephemeral).
 
-### 4. Clone repositories
+### 3. Clone `openwakeword`
 
 ```bash
 [ -d openwakeword ] || git clone https://github.com/dscripka/openWakeWord.git openwakeword
-[ -d piper-sample-generator ] || git clone https://github.com/dscripka/piper-sample-generator.git piper-sample-generator
 ```
 
-### 5. Install OpenWakeWord and first NumPy pin
+### 4. Install OpenWakeWord and pin NumPy
 
 ```bash
 cd openwakeword
@@ -172,7 +161,7 @@ cd ..
 pip install "numpy<2"
 ```
 
-### 6. Download OpenWakeWord feature models (not in git)
+### 5. Download OpenWakeWord feature models (not in git)
 
 The clone does not include `resources/models/*.onnx` / `*.tflite`. Install the
 release assets into the package tree (editable install writes under
@@ -194,30 +183,7 @@ This also downloads bundled wakeword checkpoints and VAD weights; only the
 melspectrogram and embedding ONNX files are required for training feature
 extraction, but pulling the full set matches upstream defaults.
 
-### 7. Piper Python dependencies, then re-pin NumPy
-
-`piper-sample-generator/requirements.txt` includes unpinned `numpy`; installing it
-may upgrade NumPy to 2.x. Always re-apply the pin after.
-
-```bash
-pip install -r piper-sample-generator/requirements.txt
-pip install "numpy<2"
-```
-
-After this, `pip check` may still report conflicts (e.g. `numpy-minmax` /
-`numpy-rms` prefer NumPy ≥2). Training has run successfully with **NumPy 1.x**
-re-pinned; treat resolver noise as expected unless imports or training fail.
-
-### 8. Download Piper voice model (not in git)
-
-```bash
-mkdir -p piper-sample-generator/models
-wget -O piper-sample-generator/models/en-us-libritts-high.pt \
-  'https://github.com/rhasspy/piper-sample-generator/releases/download/v1.0.0/en-us-libritts-high.pt'
-# Companion JSON is usually present in the clone; if missing, obtain from the same release tree.
-```
-
-### 9. Download training data from HuggingFace
+### 6. Download training data from HuggingFace
 
 ```bash
 pip install huggingface_hub
@@ -247,7 +213,7 @@ If HuggingFace rate-limits or 404s on a filename, check the dataset page
 for renames. This has happened before (the original filename
 `openwakeword_features.npy` was renamed to `validation_set_features.npy`).
 
-### 10. Prepare background audio and RIRs
+### 7. Prepare background audio and RIRs
 
 ```bash
 # Minimal background placeholder (sufficient for first pass)
@@ -263,13 +229,51 @@ For production-quality training, source proper background audio and the
 MIT RIR dataset. The training pipeline degrades gracefully without RIRs
 (skips reverb augmentation) and with minimal background audio.
 
-### 11. Training config
+### 8. Generate WAVs with Cartesia (workstation) and rsync to the instance
 
-`hey_sara_model.yml` should already be in **`WORKDIR`** from §3. If not, copy from
-**`$REPOROOT/profiling/sara-wakeword/hey_sara_model.yml`** or rsync from the
-workstation.
+On a machine with **Cartesia** credentials (see `generate_samples.py` / forked_assistant
+`tts` module and `.env`), from a checkout that includes **`profiling/sara-wakeword/`**:
 
-### 12. Run training
+```bash
+# Positives — counts should match hey_sara_model.yml n_samples / n_samples_val intent
+python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 3000 \
+  -o /tmp/oww_pos_train
+python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 500 \
+  -o /tmp/oww_pos_test
+
+# Adversarial negatives (copy adversarial_phrases.example.txt or build from YAML)
+python profiling/sara-wakeword/generate_samples.py --backend cartesia \
+  --phrases-file profiling/sara-wakeword/adversarial_phrases.example.txt --count 500 \
+  -o /tmp/oww_neg_train
+python profiling/sara-wakeword/generate_samples.py --backend cartesia \
+  --phrases-file profiling/sara-wakeword/adversarial_phrases.example.txt --count 100 \
+  -o /tmp/oww_neg_test
+```
+
+Adjust **`--count`** so that after **`--phrases-file`** multiplication (samples **per phrase** × number of lines) you reach at least **`n_samples`** for train dirs and **`n_samples_val`** for test dirs (see Target State). The examples above are **illustrative** — scale **per phrase** until each of **`positive_train`**, **`negative_train`** has ≥ **`n_samples`** WAVs and each of **`positive_test`**, **`negative_test`** has ≥ **`n_samples_val`**.
+
+On the **instance**, create OWW’s expected layout and sync:
+
+```bash
+cd "$WORKDIR"
+mkdir -p hey_sara_output/hey_sara/positive_train hey_sara_output/hey_sara/positive_test \
+         hey_sara_output/hey_sara/negative_train hey_sara_output/hey_sara/negative_test
+```
+
+From the **workstation** (replace host and paths):
+
+```bash
+rsync -e ssh -av /tmp/oww_pos_train/ cloud-task-sara:$WORKDIR/hey_sara_output/hey_sara/positive_train/
+rsync -e ssh -av /tmp/oww_pos_test/ cloud-task-sara:$WORKDIR/hey_sara_output/hey_sara/positive_test/
+rsync -e ssh -av /tmp/oww_neg_train/ cloud-task-sara:$WORKDIR/hey_sara_output/hey_sara/negative_train/
+rsync -e ssh -av /tmp/oww_neg_test/ cloud-task-sara:$WORKDIR/hey_sara_output/hey_sara/negative_test/
+```
+
+### 9. Training config
+
+`hey_sara_model.yml` and **`oww_train_shim/`** should already be in **`WORKDIR`** from §2.
+
+### 10. Run training (no `--generate_clips`)
 
 **Critical: run from the working directory** (where `hey_sara_model.yml`
 and all relative paths resolve), not from `openwakeword/`.
@@ -279,26 +283,22 @@ cd "$WORKDIR"
 source venv/bin/activate
 python -m openwakeword.train \
     --training_config hey_sara_model.yml \
-    --generate_clips \
     --augment_clips \
     --train_model
 ```
 
+Do **not** pass **`--generate_clips`** on the happy path — that would invoke Piper’s
+generator unless you switched YAML to **`piper_sample_generator_path: "./piper-sample-generator"`**
+(Appendix A).
+
 The correct CLI flag is `--training_config` (not `--config`).
 
-**Re-runs:** If clip subdirectories already contain files from a previous run, the
-trainer may **skip** some clip-generation steps and continue (watch logs for
-“Skipping generation…”). To force regeneration, clear those directories first.
+**Re-runs:** To force re-augmentation, remove feature `*.npy` under **`hey_sara_output/hey_sara/`**
+or pass upstream **`--overwrite`** with **`--augment_clips`** per OpenWakeWord docs.
 
-**Re-running with `--generate_clips`:** The pipeline may log that it is skipping
-negative (or other) clip batches when enough WAVs already exist in the configured
-output directories — not necessarily a full regeneration. For a clean clip pass,
-remove the relevant clip output directories first (see OpenWakeWord `train.py` /
-config for paths), accepting longer wall time.
+Expected wall time: depends on clip counts and instance type.
 
-Expected wall time: 1-4 hours depending on instance type and sample count.
-
-### 13. Collect output
+### 11. Collect output
 
 ```bash
 ls -la hey_sara_output/hey_sara.onnx
@@ -315,13 +315,48 @@ Transfer the ONNX file back to the controlling machine via rsync/SFTP.
   back to **CPU** unless you install **`onnxruntime-gpu`** matching your CUDA
   stack (optional; slower but valid).
 - `torchvision` missing — only needed for figure generation, not training.
-- `torchmetrics` / `webrtcvad` may warn about `pkg_resources` / setuptools
-  deprecation — harmless unless setuptools removal breaks a dependency; pin
-  `setuptools<81` only if you need quiet logs.
+- `torchmetrics` may warn about `pkg_resources` / setuptools deprecation —
+  harmless unless setuptools removal breaks a dependency; pin `setuptools<81`
+  only if you need quiet logs.
 - **`torch_audiomentations`** may emit `FutureWarning` about an `output_type`
   argument — upstream library noise, not a training failure.
 - **`audiomentations`** may warn about `float64` samples being converted to
   `float32` — benign.
+
+---
+
+## Appendix A — Deprecated Piper fallback (not tracked in Target State)
+
+**Status:** **Deprecated.** Lower-quality than the Cartesia happy path. No Target
+State items and no Audits apply to this path — an agent must **re-derive** steps
+from this appendix (and upstream `openwakeword` / `piper-sample-generator`) if
+Piper is revived.
+
+**When:** You want **`--generate_clips`** on the GPU node and accept Piper TTS
+instead of pre-placed cloud WAVs.
+
+**YAML:** In **`hey_sara_model.yml`**, set **`piper_sample_generator_path`** to
+**`"./piper-sample-generator"`** (not **`./oww_train_shim`**). Remove or do not
+copy **`oww_train_shim/`** into **WORKDIR**, or leave it unused.
+
+**On the instance (sketch):**
+
+```bash
+sudo apt-get update -qq
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y libespeak-ng1
+[ -d piper-sample-generator ] || git clone https://github.com/dscripka/piper-sample-generator.git piper-sample-generator
+pip install -r piper-sample-generator/requirements.txt
+pip install "numpy<2"
+mkdir -p piper-sample-generator/models
+wget -O piper-sample-generator/models/en-us-libritts-high.pt \
+  'https://github.com/rhasspy/piper-sample-generator/releases/download/v1.0.0/en-us-libritts-high.pt'
+```
+
+Then run **`python -m openwakeword.train --training_config hey_sara_model.yml --generate_clips --augment_clips --train_model`**.
+
+**Note:** `piper-sample-generator/requirements.txt` unpinned **`numpy`** may pull
+NumPy 2.x — always re-pin **`numpy<2`**. **`webrtcvad`** / **`espeak_phonemizer`**
+come from that requirements file.
 
 ---
 
@@ -330,7 +365,7 @@ Transfer the ONNX file back to the controlling machine via rsync/SFTP.
 **Where to run:** Checks **1** (tool + **`cloud-resources.md`** row) and **2**
 (**`ssh -G`**) use the **workstation**. Check **3** runs **on the instance**.
 Check **4** uses the **catalog** on the workstation and a path test **on the
-instance** (SSH session). Checks **5–17** assume a shell **cd**’d to **WORKDIR** on
+instance** (SSH session). Checks **5–15** assume a shell **cd**’d to **WORKDIR** on
 the instance, using **`venv/bin/python`** where noted (or activate **`venv/`**
 first).
 
@@ -344,6 +379,12 @@ items under Target State (from **Instance, SSH, auth, and cataloged WORKDIR**
 through **Post-training output**). Each heading below names the item it verifies.
 If you use a slug other than **`sara`**, substitute **`cloud-task-<slug>`** in
 workstation commands.
+
+**Optional sanity (not a Target State item):** before huge HuggingFace downloads,
+run **`df -h .`** from **WORKDIR**. Low free space is usually a **launch-time**
+mistake (**`--volume-gb`** too small for this workload); fix with a larger volume
+on a new instance or EBS resize — do not treat a fixed gigabyte threshold as a
+profile convergence item.
 
 ### 1. A running OWW training instance is launched and tracked in `cloud-resources.md`
 
@@ -395,7 +436,7 @@ Expected: four lines containing **`PASS: agent authenticated`**, **`PASS: gh ins
 
 **Catalog (workstation):** The **Nodes** row for **`cloud-task-sara`** (or your
 **`cloud-task-<slug>`**) has a non-empty **WORKDIR** cell with the **absolute path**
-the operator uses on the instance (set in Apply §3).
+the operator uses on the instance (set in Apply §2).
 
 **On the instance**, with **`WORKDIR_PATH`** set to that cataloged path (or after
 `cd` to **WORKDIR** so **`$(pwd -P)`** is correct):
@@ -422,7 +463,8 @@ on NVMe, **Notes** in **`cloud-resources.md`** should call out instance store.
 ```bash
 test -f hey_sara_model.yml \
   && test -d openwakeword \
-  && test -d piper-sample-generator \
+  && test -d oww_train_shim \
+  && test -f oww_train_shim/generate_samples.py \
   && test -d venv \
   && case "$(pwd -P)" in */agentic-cloud-task|*/agentic-cloud-task/*)
        echo "FAIL: WORKDIR must not be inside the agentic-cloud-task repo path"
@@ -435,28 +477,30 @@ test -f hey_sara_model.yml \
 ```
 Expected: `PASS: WORKDIR layout and isolation OK`
 
-### 6. At least ~25 GB free space on the filesystem containing WORKDIR
+### 6. Positive and adversarial-negative WAVs are pre-placed (Cartesia happy path)
+
+**On the instance** from **WORKDIR**. Minimum WAV counts follow **`hey_sara_model.yml`**
+(`n_samples` = 3000 train, `n_samples_val` = 500 test per polarity); adjust the
+thresholds below if you change the YAML.
 
 ```bash
-AVAIL=$(df -BG --output=avail . 2>/dev/null | tail -1 | tr -dc '0-9')
-if [ -n "$AVAIL" ] && [ "$AVAIL" -ge 25 ] 2>/dev/null; then
-  echo "PASS: >=25G avail on WORKDIR filesystem ($AVAIL G)"
+BASE=hey_sara_output/hey_sara
+MIN_TR=3000
+MIN_TE=500
+n_pt=$(find "$BASE/positive_train" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
+n_nt=$(find "$BASE/negative_train" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
+n_pe=$(find "$BASE/positive_test" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
+n_ne=$(find "$BASE/negative_test" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
+if [ "$n_pt" -ge "$MIN_TR" ] && [ "$n_nt" -ge "$MIN_TR" ] \
+   && [ "$n_pe" -ge "$MIN_TE" ] && [ "$n_ne" -ge "$MIN_TE" ]; then
+  echo "PASS: clip dirs populated (pt=$n_pt nt=$n_nt pe=$n_pe ne=$n_ne)"
 else
-  echo "FAIL: need ~25GB+ free on filesystem containing WORKDIR (avail=${AVAIL:-unknown})"
+  echo "FAIL: need >=$MIN_TR train and >=$MIN_TE test WAVs per polarity (pt=$n_pt nt=$n_nt pe=$n_pe ne=$n_ne)"
 fi
 ```
-Expected: `PASS: >=25G avail on WORKDIR filesystem (... G)`
+Expected: `PASS: clip dirs populated (...)`
 
-### 7. System package `libespeak-ng1` is installed
-
-```bash
-dpkg -l libespeak-ng1 2>/dev/null | grep -q '^ii' \
-    && echo "PASS: libespeak-ng1 installed" \
-    || echo "FAIL: libespeak-ng1 missing"
-```
-Expected: `PASS: libespeak-ng1 installed`
-
-### 8. A Python venv exists
+### 7. A Python venv exists
 
 ```bash
 [ -d venv ] && venv/bin/python --version 2>/dev/null \
@@ -465,57 +509,47 @@ Expected: `PASS: libespeak-ng1 installed`
 ```
 Expected: `Python 3.x.x` on the first line, then `PASS: venv exists and python works`
 
-### 9. `openwakeword` is installed (editable package reachable)
+### 8. `openwakeword` is installed (editable package reachable)
 
 ```bash
 venv/bin/python -c "import openwakeword.train; print('PASS: openwakeword.train importable')"
 ```
 Expected: `PASS: openwakeword.train importable`
 
-### 10. OpenWakeWord feature models are present under `resources/models`
+### 9. OpenWakeWord feature models are present under `resources/models`
 
 ```bash
 test -f openwakeword/openwakeword/resources/models/melspectrogram.onnx \
     && test -f openwakeword/openwakeword/resources/models/embedding_model.onnx \
     && echo "PASS: OWW feature ONNX models present" \
-    || echo "FAIL: run download_models() from openwakeword/ repo dir (see Apply §6)"
+    || echo "FAIL: run download_models() from openwakeword/ repo dir (see Apply §5)"
 ```
 Expected: `PASS: OWW feature ONNX models present`
 
-### 11. NumPy is version 1.x
+### 10. NumPy is version 1.x
 
 ```bash
 venv/bin/python -c "import numpy; v=int(numpy.__version__.split('.')[0]); print(f'numpy {numpy.__version__}'); assert v < 2, 'FAIL: numpy 2.x'"
 ```
 Expected: `numpy 1.x.x`
 
-### 12. `huggingface_hub` is installed
+### 11. `huggingface_hub` is installed
 
 ```bash
 venv/bin/python -c "import huggingface_hub; print('PASS: huggingface_hub importable')"
 ```
 Expected: `PASS: huggingface_hub importable`
 
-### 13. Piper sample generation is provisioned for `--generate_clips`
+### 12. The `openwakeword` repository is cloned
 
 ```bash
-test -f piper-sample-generator/models/en-us-libritts-high.pt \
-    && test -f piper-sample-generator/models/en-us-libritts-high.pt.json \
-    && venv/bin/python -c "import webrtcvad; from espeak_phonemizer import Phonemizer; Phonemizer('en-us'); print('PASS: Piper deps and model files OK')" \
-    || echo "FAIL: Piper model or Python deps"
+[ -d openwakeword ] \
+    && echo "PASS: openwakeword repo present" \
+    || echo "FAIL: openwakeword missing"
 ```
-Expected: `PASS: Piper deps and model files OK`
+Expected: `PASS: openwakeword repo present`
 
-### 14. Required repositories are cloned
-
-```bash
-[ -d openwakeword ] && [ -d piper-sample-generator ] \
-    && echo "PASS: repos cloned" \
-    || echo "FAIL: repos missing"
-```
-Expected: `PASS: repos cloned`
-
-### 15. Training data files are present
+### 13. Training data files are present
 
 ```bash
 [ -f validation_set_features.npy ] \
@@ -527,7 +561,7 @@ Expected: `PASS: repos cloned`
 ```
 Expected: `PASS: training data present`
 
-### 16. `hey_sara_model.yml` is present in the working directory
+### 14. `hey_sara_model.yml` is present in the working directory
 
 ```bash
 [ -f hey_sara_model.yml ] \
@@ -536,7 +570,7 @@ Expected: `PASS: training data present`
 ```
 Expected: `PASS: training config present`
 
-### 17. `hey_sara_output/hey_sara.onnx` exists and loads as a valid model
+### 15. `hey_sara_output/hey_sara.onnx` exists and loads as a valid model
 
 ```bash
 venv/bin/python -c "
