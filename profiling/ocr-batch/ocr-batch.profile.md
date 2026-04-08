@@ -2,8 +2,6 @@
 
 GPU-accelerated OCR batch processing using **Docling** + **RapidOCR `backend="torch"`** (PyTorch on GPU when Docling uses CUDA). This profile’s **Target State** is **torch-first**; ONNX and paddle are **reference-only** (see [Appendix A](#appendix-a--alternate-rapidocr-backends-reference)).
 
-Repeatable: instance baked to a custom AMI, relaunched (~90 s boot to working state).
-
 Layers on [aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md) — must hold before this profile applies.
 
 **Headless auth** (`agent`, `gh`): [headless-auth](../headless-auth/headless-auth.profile.md).
@@ -20,7 +18,7 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 Default **slug `ocr`**: EC2 Name **`cloud-task-ocr`**, `~/.ssh/config` Host **`cloud-task-ocr`**.
 
-- **A running OCR batch instance is launched and tracked in `cloud-resources.md`.** Name **`cloud-task-ocr`**, `--tag` matches [`tools/launch-spot-instance.py`](../../tools/launch-spot-instance.py). Gitignored [**`cloud-resources.md`**](../../cloud-resources.md) **Nodes** row: **Name**, **SSH Host**, **Instance ID**, **Public IP**, **Region**, **Type**, **Status**, **Notes** — current per [AGENTS.md](../../AGENTS.md). **Spot** market; one-time requests use `--instance-initiated-shutdown-behavior terminate` (required with spot termination behavior).
+- **A running OCR batch instance is launched and tracked in `cloud-resources.md`.** Name **`cloud-task-ocr`**, `--tag` matches [`tools/launch-spot-instance.py`](../../tools/launch-spot-instance.py). Gitignored [**`cloud-resources.md`**](../../cloud-resources.md) **Nodes** row: **Name**, **SSH Host**, **Instance ID**, **Public IP**, **Region**, **Type**, **Status**, **Notes** — current per [AGENTS.md](../../AGENTS.md). Market type is a **launch-time parameter**: **spot** (cost-sensitive batch work; `--instance-initiated-shutdown-behavior terminate`) or **on-demand** (AMI-bake builds, ensured availability; `--instance-initiated-shutdown-behavior stop`).
 
 - **SSH is profiled on the controlling machine.** **`Host cloud-task-ocr`**, **HostName** = instance public IP; **User** / **IdentityFile** per [dev-workstation](../local-dev-env/dev-workstation.profile.md). **`cloud-resources.md`** **SSH (current)** lists usable commands while running.
 
@@ -41,23 +39,13 @@ Default **slug `ocr`**: EC2 Name **`cloud-task-ocr`**, `~/.ssh/config` Host **`c
   - `PdfPipelineOptions`, `RapidOcrOptions`, `AcceleratorOptions`, `AcceleratorDevice`
   - `InputFormat`
 
-- **`onnxruntime-gpu` is installed.** Docling layout/table models use `CUDAExecutionProvider` on the T4.
+- **`onnxruntime-gpu` is installed (≤1.22).** Docling layout/table models use `CUDAExecutionProvider` on the T4. Versions ≥1.23 use DRM-based device discovery that fails on EC2 g4dn (`/sys/class/drm/card0/device/vendor` missing for the GPU); pin to avoid.
 
 - **The T4 GPU is accessible.** `nvidia-smi` shows Tesla T4, ≥15 GB VRAM, working driver.
 
 - **The profiled OCR inference path is RapidOCR torch on CUDA.** In the venv: `import torch` and **`torch.cuda.is_available()`** is True. Docling pipeline uses **`RapidOcrOptions(backend="torch", force_full_page_ocr=True)`** on **`PdfPipelineOptions(do_ocr=True, do_table_structure=True, ocr_batch_size=…)`** with **`AcceleratorOptions(device=CUDA)`**, wired through **`PdfFormatOption` / `ImageFormatOption`** (Docling 2.x — no top-level `pipeline_options=` on `DocumentConverter`). RapidOCR runs on **GPU**; layout/table ONNX stays on **onnxruntime-gpu**.
 
 - **PDF smoke conversion succeeds** using that torch pipeline: a test PDF under WORKDIR yields `success` and non-empty Markdown export.
-
-### Evaluation baseline (torch)
-
-- **A completed canonical torch benchmark capture exists under WORKDIR.** `sample_scan/` holds evaluation images; `runs/<run-id>/` contains `timings.json`, `SUMMARY.md`, `outputs/cuda/` and `outputs/cpu/`, `run_benchmark.py` matching [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py) (CUDA vs CPU accelerator sweep with **torch** backend). Canonical id **`2026-04-08_docling-torch-round2-v1`** (or documented successor). *Purpose:* regression baseline aligned with the profiled default.
-
-### Transfer and AMI
-
-- **An rsync-oriented input/output layout exists** _(placeholder — inbox / batch-in / batch-out TBD)._
-
-- **The instance is bake-ready** after Apply: OCR stack + smoke OK; pre-bake purge per [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) Apply §5 before snapshot; AMI recorded in **`cloud-resources.md`**.
 
 ---
 
@@ -67,6 +55,7 @@ Default **slug `ocr`**: EC2 Name **`cloud-task-ocr`**, `~/.ssh/config` Host **`c
 
 Project **`venv/`**, **`.env`** loaded; AMI from **`cloud-resources.md`**; slug **`ocr`**.
 
+**Spot** (batch work):
 ```bash
 python tools/launch-spot-instance.py \
     --ami <ami-id-from-cloud-resources.md> \
@@ -74,6 +63,17 @@ python tools/launch-spot-instance.py \
     --volume-gb 125 \
     --tag cloud-task-ocr \
     --instance-initiated-shutdown-behavior terminate
+```
+
+**On-demand** (AMI-bake / ensured):
+```bash
+python tools/launch-spot-instance.py \
+    --ami <ami-id-from-cloud-resources.md> \
+    --instance-type g4dn.xlarge \
+    --volume-gb 125 \
+    --tag cloud-task-ocr \
+    --market-type on-demand \
+    --instance-initiated-shutdown-behavior stop
 ```
 
 Update **`cloud-resources.md`** (Nodes row; WORKDIR placeholder until §2). Converge [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) if needed. **[headless-auth](../headless-auth/headless-auth.profile.md)** if `agent` / `gh` required.
@@ -99,7 +99,7 @@ cd /home/ubuntu/ocr-work
 source venv/bin/activate
 
 pip install "docling[rapidocr]"
-pip install onnxruntime-gpu
+pip install "onnxruntime-gpu<1.23"
 ```
 
 Verify **PyTorch sees CUDA** (profiled default):
@@ -110,7 +110,7 @@ venv/bin/python -c "import torch; assert torch.cuda.is_available(); print('torch
 
 If CUDA is false, install a **CUDA build** of PyTorch for the driver ([PyTorch install](https://pytorch.org/get-started/locally/)); DL AMI usually suffices.
 
-**API note:** `DocumentConverter` uses `format_options={...}`, not top-level `pipeline_options=`. **Known noise:** onnxruntime may warn about `/sys/class/drm/...` — harmless if CUDA EP loads.
+**API note:** `DocumentConverter` uses `format_options={...}`, not top-level `pipeline_options=`. **Known noise:** onnxruntime ≤1.22 may warn about `/sys/class/drm/...` — harmless; CUDA EP still loads. Versions ≥1.23 fail to load CUDA EP entirely due to DRM device discovery on EC2 g4dn (see Target State version pin).
 
 ### 4. PDF smoke (torch — required before bake)
 
@@ -148,38 +148,12 @@ print("PASS: smoke conversion")
 PY
 ```
 
-### 5. Canonical torch evaluation capture (regression baseline)
-
-On the **instance**, `sample_scan/` populated; run directory with [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py):
-
-```bash
-export OCR_WORKDIR=/home/ubuntu/ocr-work
-export OCR_BATCH_SIZE=16
-RUN_ID=2026-04-08_docling-torch-round2-v1
-mkdir -p "$OCR_WORKDIR/runs/$RUN_ID"
-cp profiling/ocr-batch/dev-benchmark/r2-torch.py \
-  "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py"
-source "$OCR_WORKDIR/venv/bin/activate"
-python "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py" "$OCR_WORKDIR/runs/$RUN_ID"
-```
-
-Author **`SUMMARY.md`** in the run directory.
-
-### 6. Bake custom AMI
-
-After smoke (§4) and [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) pre-bake purge:
-
-```bash
-python tools/create-ami.py --tag cloud-task-ocr --name ocr-batch-<date>
-```
-
-Record AMI in **`cloud-resources.md`**.
 
 ---
 
 ## Audit
 
-Workstation: **§1–2**. Instance (`/home/ubuntu/ocr-work`, `venv` active): **§3–13**.
+Workstation: **§1–2**. Instance (`/home/ubuntu/ocr-work`, `venv` active): **§3–11**.
 
 ### 1. Instance tracked in `cloud-resources.md`
 
@@ -299,35 +273,6 @@ print('PASS: PDF smoke torch')
 ```
 Expected: `PASS: PDF smoke torch`
 
-### 12. Canonical torch evaluation capture
-
-```bash
-export OCR_WORKDIR=/home/ubuntu/ocr-work
-RUN_ID=2026-04-08_docling-torch-round2-v1
-RUN="$OCR_WORKDIR/runs/$RUN_ID"
-test -d "$OCR_WORKDIR/sample_scan" && echo "PASS: sample_scan" || echo "FAIL: sample_scan"
-test -f "$RUN/timings.json" && echo "PASS: timings.json" || echo "FAIL"
-test -f "$RUN/SUMMARY.md" && echo "PASS: SUMMARY.md" || echo "FAIL"
-test -d "$RUN/outputs/cuda" && test -d "$RUN/outputs/cpu" && echo "PASS: outputs" || echo "FAIL"
-test -f "$RUN/run_benchmark.py" && echo "PASS: script" || echo "FAIL"
-python3 -c "
-import json, os
-run = '$RUN'
-with open(os.path.join(run, 'timings.json')) as f: d = json.load(f)
-assert d.get('benchmark_round') == 2 and d.get('rapidocr_backend') == 'torch'
-for r in d['rows']:
-    assert r.get('cuda_status') == 'success' and r.get('cpu_status') == 'success'
-assert d['totals'].get('ratio_cpu_per_cuda') is not None
-print('PASS: torch capture shape')
-"
-```
-Expected: lines ending with `PASS: torch capture shape`
-
-### 13. AMI bake readiness
-
-**Transfer layout:** Target State item is still placeholder — **no scripted audit** until inbox/batch paths are specified.
-
-**AMI:** Pre-bake purge per [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) Audit §10; confirm OCR stack + §11 smoke before snapshot.
 
 ---
 

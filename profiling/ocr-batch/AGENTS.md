@@ -20,6 +20,12 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 |------|------|
 | [ocr-batch.profile.md](ocr-batch.profile.md) | State convergence profile (Target State / Apply / Audit): **torch-first** default; ONNX/paddle and historical benchmark material live in **appendices**. |
 
+### Container development (`dev-container/`)
+
+| Location | Role |
+|----------|------|
+| [dev-container/](dev-container/AGENTS.md) | Container packaging for AWS Batch: Dockerfile, processor.py, convergence profile. |
+
 ### Dev benchmarks (`sample_scan/` timing drivers)
 
 | Location | Role |
