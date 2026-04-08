@@ -1,71 +1,63 @@
 # OCR Batch Processing — State Convergence Profile
 
-GPU-accelerated OCR batch processing environment using **Docling** with
-**RapidOCR** backend. Repeatable: instance is built once, baked into a custom
-AMI, and relaunched from that image for subsequent runs (~90 s boot to working
-state).
+GPU-accelerated OCR batch processing using **Docling** + **RapidOCR `backend="torch"`** (PyTorch on GPU when Docling uses CUDA). This profile’s **Target State** is **torch-first**; ONNX and paddle are **reference-only** (see [Appendix A](#appendix-a--alternate-rapidocr-backends-reference)).
 
-Layers on [aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md)
-— that profile must hold before this one is applied.
+Repeatable: instance baked to a custom AMI, relaunched (~90 s boot to working state).
 
-**Headless auth (Cursor agent CLI, GitHub / git HTTPS)** on the node is defined in
-[headless-auth](../headless-auth/headless-auth.profile.md). Apply it after SSH works
-if the workflow needs `agent` or `gh` on the instance.
+Layers on [aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md) — must hold before this profile applies.
+
+**Headless auth** (`agent`, `gh`): [headless-auth](../headless-auth/headless-auth.profile.md).
 
 Follows the [state convergence pattern](../../policies/state-convergence-pattern.md).
 
-**Transfer pattern:** scanned documents are deposited to the instance via SSH
-(rsync/scp). S3 and AWS Batch are out of scope for this build; the interface is
-SSH-only.
+**Transfer:** documents via SSH (rsync/scp); S3 / AWS Batch out of scope here.
 
 ---
 
 ## Target State
 
-### Instance, SSH, auth, and cataloged WORKDIR
+### Instance, SSH, auth, cataloged WORKDIR
 
-These items specialize the [base GPU node](../aws-deep-learning-base/base-gpu-node.profile.md) **Instance** and **SSH** Target State and [headless-auth](../headless-auth/headless-auth.profile.md) for OCR batch work. Default **slug** is **`ocr`**: EC2 **Name** tag and `~/.ssh/config` **Host** are **`cloud-task-ocr`** (pattern `cloud-task-<slug>` from the base profile).
+Default **slug `ocr`**: EC2 Name **`cloud-task-ocr`**, `~/.ssh/config` Host **`cloud-task-ocr`**.
 
-- **A running OCR batch instance is launched and tracked in `cloud-resources.md`.** The instance is named **`cloud-task-ocr`**, matching `--tag` to [`tools/launch-spot-instance.py`](../../tools/launch-spot-instance.py). The gitignored [**`cloud-resources.md`**](../../cloud-resources.md) **Nodes** row for this instance records **Name**, **SSH Host**, **Instance ID**, **Public IP**, **Region**, **Type**, **Status**, **Notes**, and is kept current per root [AGENTS.md](../../AGENTS.md). Market type is **spot** (bulk OCR is interruptible and cost-sensitive); spot one-time requests require `--instance-initiated-shutdown-behavior terminate` (cannot use `stop` with spot interruption behavior `terminate`).
+- **A running OCR batch instance is launched and tracked in `cloud-resources.md`.** Name **`cloud-task-ocr`**, `--tag` matches [`tools/launch-spot-instance.py`](../../tools/launch-spot-instance.py). Gitignored [**`cloud-resources.md`**](../../cloud-resources.md) **Nodes** row: **Name**, **SSH Host**, **Instance ID**, **Public IP**, **Region**, **Type**, **Status**, **Notes** — current per [AGENTS.md](../../AGENTS.md). **Spot** market; one-time requests use `--instance-initiated-shutdown-behavior terminate` (required with spot termination behavior).
 
-- **SSH is profiled for this instance on the controlling machine.** A per-instance **`Host`** entry exists in `~/.ssh/config` (default **`cloud-task-ocr`**), with **HostName** set to the instance public IP. **User**, **IdentityFile**, and `cloud-task-*` wildcard behavior follow the [local dev workstation profile](../local-dev-env/dev-workstation.profile.md). The **SSH (current)** section in **`cloud-resources.md`** lists usable commands for this host while it is **running** and the config entry matches.
+- **SSH is profiled on the controlling machine.** **`Host cloud-task-ocr`**, **HostName** = instance public IP; **User** / **IdentityFile** per [dev-workstation](../local-dev-env/dev-workstation.profile.md). **`cloud-resources.md`** **SSH (current)** lists usable commands while running.
 
-- **Agent CLI and GitHub CLI are authenticated on the node** per [headless-auth](../headless-auth/headless-auth.profile.md): a trivial agent prompt completes without a login stall; **`gh --version`** succeeds; **`gh auth status`** exits 0; **`gh auth setup-git`** has been run so global git credential helper uses **`gh`** for HTTPS.
+- **Agent CLI and GitHub CLI are authenticated** per [headless-auth](../headless-auth/headless-auth.profile.md): `agent` prompt completes; `gh --version`; `gh auth status` exits 0; `gh auth setup-git` for HTTPS.
 
-- **WORKDIR is named, recorded in `cloud-resources.md`, created on the instance, and uses durable storage by default.** The **Nodes** table **WORKDIR** column for this node's **SSH Host** contains the **absolute path** to the OCR working root (the same directory Apply uses for `mkdir` / `cd`). **Primary spec:** that path lives on **root EBS** (e.g. `/home/ubuntu/ocr-work`) so mutable state survives **stop → start** of the same instance; it is still subject to **terminate** and teardown policy.
+- **WORKDIR is named in `cloud-resources.md`, exists on the instance, uses durable storage.** **Nodes.WORKDIR** = absolute OCR root (e.g. `/home/ubuntu/ocr-work` on root EBS); survives stop→start; terminate/teardown still applies.
 
-### Working directory
+### Working directory and Python
 
-- **WORKDIR is a flat directory on the instance, and is not inside the project repo clone.** At minimum, `venv/` is a direct child of WORKDIR. Mutable state (input queue, output results, processing scratch) lives only in WORKDIR. The cataloged path and storage class are defined in **Instance, SSH, auth, and cataloged WORKDIR** above.
+- **WORKDIR is flat, not inside the project repo clone; `venv/` is a direct child.** Mutable batch state lives only under WORKDIR.
 
-### Python environment
+- **A Python venv exists at `WORKDIR/venv`** (Python 3.10 per base profile). pip / setuptools / wheel current.
 
-- **A Python venv exists at `WORKDIR/venv`** (created from Python 3.10 identified by the base profile). pip, setuptools, and wheel are upgraded to current.
+### OCR stack (profiled default: torch)
 
-### OCR processing stack
+- **Docling with RapidOCR extra is installed.** Imports succeed:
+  - `DocumentConverter`, `PdfFormatOption`, `ImageFormatOption`
+  - `PdfPipelineOptions`, `RapidOcrOptions`, `AcceleratorOptions`, `AcceleratorDevice`
+  - `InputFormat`
 
-- **Docling is installed with the RapidOCR extra.** `pip install "docling[rapidocr]"` in the venv. The following imports resolve without error:
-  - `from docling.document_converter import DocumentConverter`
-  - `from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions, AcceleratorOptions, AcceleratorDevice`
-  - `from docling.datamodel.base import InputFormat`
+- **`onnxruntime-gpu` is installed.** Docling layout/table models use `CUDAExecutionProvider` on the T4.
 
-- **`onnxruntime-gpu` is installed for CUDA-accelerated model inference.** Docling's layout analysis and table structure models use ONNX Runtime; `onnxruntime-gpu` provides `CUDAExecutionProvider` so these models run on the T4 GPU. `ort.get_available_providers()` includes `CUDAExecutionProvider`.
+- **The T4 GPU is accessible.** `nvidia-smi` shows Tesla T4, ≥15 GB VRAM, working driver.
 
-- **Docker is available on the instance.** Present from the DL AMI. Not required for the standalone proof-of-concept but available if needed.
+- **The profiled OCR inference path is RapidOCR torch on CUDA.** In the venv: `import torch` and **`torch.cuda.is_available()`** is True. Docling pipeline uses **`RapidOcrOptions(backend="torch", force_full_page_ocr=True)`** on **`PdfPipelineOptions(do_ocr=True, do_table_structure=True, ocr_batch_size=…)`** with **`AcceleratorOptions(device=CUDA)`**, wired through **`PdfFormatOption` / `ImageFormatOption`** (Docling 2.x — no top-level `pipeline_options=` on `DocumentConverter`). RapidOCR runs on **GPU**; layout/table ONNX stays on **onnxruntime-gpu**.
 
-### GPU verification
+- **PDF smoke conversion succeeds** using that torch pipeline: a test PDF under WORKDIR yields `success` and non-empty Markdown export.
 
-- **The T4 GPU is accessible and drivers are loaded.** `nvidia-smi` reports Tesla T4, ≥15 GB VRAM, and a functional driver. The `CUDAExecutionProvider` is listed by `onnxruntime`.
+### Evaluation baseline (torch)
 
-### Transfer and batch structure
+- **A completed canonical torch benchmark capture exists under WORKDIR.** `sample_scan/` holds evaluation images; `runs/<run-id>/` contains `timings.json`, `SUMMARY.md`, `outputs/cuda/` and `outputs/cpu/`, `run_benchmark.py` matching [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py) (CUDA vs CPU accelerator sweep with **torch** backend). Canonical id **`2026-04-08_docling-torch-round2-v1`** (or documented successor). *Purpose:* regression baseline aligned with the profiled default.
 
-_To be specified. Broad shape from the design brief:_
+### Transfer and AMI
 
-- **An input/output folder structure supports rsync-based batch flow.** _(placeholder — specific layout TBD: inbox, batch-in, batch-out, results. Documents are deposited via SSH, not S3.)_
+- **An rsync-oriented input/output layout exists** _(placeholder — inbox / batch-in / batch-out TBD)._
 
-### AMI bake readiness
-
-- **The instance is bake-ready after initial build.** After the first full Apply cycle (common patterning + OCR stack install), the instance state is suitable for snapshotting into a custom AMI. Pre-bake secrets purge per [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) Apply §5 is run before creating the image. The resulting AMI is recorded in `cloud-resources.md` and used for all subsequent launches.
+- **The instance is bake-ready** after Apply: OCR stack + smoke OK; pre-bake purge per [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) Apply §5 before snapshot; AMI recorded in **`cloud-resources.md`**.
 
 ---
 
@@ -73,11 +65,7 @@ _To be specified. Broad shape from the design brief:_
 
 ### 1. Launch instance (workstation)
 
-On the **workstation**, with project **`venv/`** activated and **`.env`** loaded,
-resolve the AMI from **`cloud-resources.md`**, then launch with slug **`ocr`**.
-
-For **spot**, one-time requests require matching shutdown and interruption
-behaviors — pass `--instance-initiated-shutdown-behavior terminate`:
+Project **`venv/`**, **`.env`** loaded; AMI from **`cloud-resources.md`**; slug **`ocr`**.
 
 ```bash
 python tools/launch-spot-instance.py \
@@ -88,20 +76,9 @@ python tools/launch-spot-instance.py \
     --instance-initiated-shutdown-behavior terminate
 ```
 
-If spot capacity is unavailable (`InsufficientInstanceCapacity`), retry after
-a few minutes — g4dn spot in ap-southeast-2 can be temporarily exhausted.
-On-demand requires a **Running On-Demand G and VT instances** vCPU quota > 0
-(currently 0; quota increase pending as of 2026-04-08).
+Update **`cloud-resources.md`** (Nodes row; WORKDIR placeholder until §2). Converge [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) if needed. **[headless-auth](../headless-auth/headless-auth.profile.md)** if `agent` / `gh` required.
 
-Update **`cloud-resources.md`** in the same session: add or refresh the **Nodes**
-row. Leave **WORKDIR** as placeholder until §2 sets the path.
-
-SSH to the node and converge **[aws-deep-learning-base](../aws-deep-learning-base/base-gpu-node.profile.md)**
-if needed (baked AMI skips §2–4 of that profile). When the workflow needs
-**Cursor agent CLI** or **`gh`** on the instance, run
-**[headless-auth](../headless-auth/headless-auth.profile.md)** Apply / Audit.
-
-### 2. Choose `WORKDIR` and create venv
+### 2. `WORKDIR` and venv
 
 ```bash
 WORKDIR=/home/ubuntu/ocr-work
@@ -113,10 +90,9 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 ```
 
-On the **workstation**, update **`cloud-resources.md`**: set the **WORKDIR** column
-for this instance's **SSH Host** row to the absolute path.
+Set **WORKDIR** in **`cloud-resources.md`**.
 
-### 3. Install OCR processing stack
+### 3. Install stack (Docling + ONNX GPU + PyTorch CUDA for torch OCR)
 
 ```bash
 cd /home/ubuntu/ocr-work
@@ -126,141 +102,297 @@ pip install "docling[rapidocr]"
 pip install onnxruntime-gpu
 ```
 
-`docling[rapidocr]` pulls in `docling` (2.85.0 at time of first install),
-`rapidocr` (3.7.0), and their dependency trees. `onnxruntime-gpu` (1.23.2)
-provides `CUDAExecutionProvider` for Docling's layout/table models.
+Verify **PyTorch sees CUDA** (profiled default):
 
-Venv footprint after this step: ~5.8 GB. Disk usage ~50% of 125 GB root volume.
+```bash
+venv/bin/python -c "import torch; assert torch.cuda.is_available(); print('torch', torch.__version__, 'cuda ok')"
+```
 
-**Known noise:** `onnxruntime` emits a warning about
-`/sys/class/drm/card0/device/vendor` — harmless; CUDA provider still loads.
+If CUDA is false, install a **CUDA build** of PyTorch for the driver ([PyTorch install](https://pytorch.org/get-started/locally/)); DL AMI usually suffices.
 
-### 4. Bake custom AMI
+**API note:** `DocumentConverter` uses `format_options={...}`, not top-level `pipeline_options=`. **Known noise:** onnxruntime may warn about `/sys/class/drm/...` — harmless if CUDA EP loads.
 
-After the full build cycle, run the [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) pre-bake secrets purge (Apply §5), then create the AMI:
+### 4. PDF smoke (torch — required before bake)
+
+Deposit **`test.pdf`** under WORKDIR. Run:
+
+```bash
+cd /home/ubuntu/ocr-work
+source venv/bin/activate
+python << 'PY'
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions, RapidOcrOptions,
+    AcceleratorOptions, AcceleratorDevice,
+)
+from docling.datamodel.base_models import InputFormat
+
+pipeline_options = PdfPipelineOptions(
+    do_ocr=True,
+    do_table_structure=True,
+    ocr_options=RapidOcrOptions(backend="torch", force_full_page_ocr=True),
+    ocr_batch_size=16,
+    accelerator_options=AcceleratorOptions(
+        device=AcceleratorDevice.CUDA,
+        num_threads=4,
+    ),
+)
+converter = DocumentConverter(
+    allowed_formats=[InputFormat.PDF],
+    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)},
+)
+result = converter.convert("/home/ubuntu/ocr-work/test.pdf")
+assert result.status.name == "SUCCESS", result.status
+print(result.document.export_to_markdown()[:500])
+print("PASS: smoke conversion")
+PY
+```
+
+### 5. Canonical torch evaluation capture (regression baseline)
+
+On the **instance**, `sample_scan/` populated; run directory with [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py):
+
+```bash
+export OCR_WORKDIR=/home/ubuntu/ocr-work
+export OCR_BATCH_SIZE=16
+RUN_ID=2026-04-08_docling-torch-round2-v1
+mkdir -p "$OCR_WORKDIR/runs/$RUN_ID"
+cp profiling/ocr-batch/dev-benchmark/r2-torch.py \
+  "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py"
+source "$OCR_WORKDIR/venv/bin/activate"
+python "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py" "$OCR_WORKDIR/runs/$RUN_ID"
+```
+
+Author **`SUMMARY.md`** in the run directory.
+
+### 6. Bake custom AMI
+
+After smoke (§4) and [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) pre-bake purge:
 
 ```bash
 python tools/create-ami.py --tag cloud-task-ocr --name ocr-batch-<date>
 ```
 
-Record the new AMI in **`cloud-resources.md`**.
+Record AMI in **`cloud-resources.md`**.
 
 ---
 
 ## Audit
 
-Checks **1–2** run on the **workstation**. Checks **3–9** run **on the instance**
-from **WORKDIR** (`/home/ubuntu/ocr-work`) with `venv` activated.
+Workstation: **§1–2**. Instance (`/home/ubuntu/ocr-work`, `venv` active): **§3–13**.
 
-### 1. A running OCR batch instance is launched and tracked in `cloud-resources.md`
-
-**Controlling machine** (project root, **`venv/`** active, **`.env`** loaded):
+### 1. Instance tracked in `cloud-resources.md`
 
 ```bash
 python tools/launch-spot-instance.py --tag cloud-task-ocr --check
 ```
 Expected: `PASS: running instance i-... @ <ip> (tag=cloud-task-ocr)`
 
-### 2. SSH is profiled for this instance on the controlling machine
-
-**Controlling machine:**
+### 2. SSH profiled
 
 ```bash
 ssh -G cloud-task-ocr 2>/dev/null | grep -i '^hostname '
 ```
-Expected: `hostname <public-ip>` matching the instance's current address in **`cloud-resources.md`**.
+Expected: `hostname <public-ip>` matching **`cloud-resources.md`**.
 
-### 3. Agent CLI and GitHub CLI are authenticated on the node
-
-**On the instance:**
+### 3. Agent and `gh` authenticated
 
 ```bash
-echo "reply ok" | agent -p 2>/dev/null \
-    && echo "PASS: agent authenticated" \
-    || echo "FAIL: agent not authenticated or not responding"
-gh --version >/dev/null 2>&1 \
-    && echo "PASS: gh installed" \
-    || echo "FAIL: gh not found"
-gh auth status >/dev/null 2>&1 \
-    && echo "PASS: gh authenticated" \
-    || echo "FAIL: gh not authenticated"
-git config --global credential.helper 2>/dev/null | grep -q 'gh' \
-    && echo "PASS: gh credential helper configured" \
-    || echo "FAIL: gh credential helper not set"
+echo "reply ok" | agent -p 2>/dev/null && echo "PASS: agent" || echo "FAIL: agent"
+gh --version >/dev/null 2>&1 && echo "PASS: gh" || echo "FAIL: gh"
+gh auth status >/dev/null 2>&1 && echo "PASS: gh auth" || echo "FAIL: gh auth"
+git config --global credential.helper 2>/dev/null | grep -q 'gh' && echo "PASS: gh cred" || echo "FAIL: gh cred"
 ```
 Expected: four PASS lines.
 
-### 4. WORKDIR is named, recorded in `cloud-resources.md`, created on the instance, and uses durable storage
+### 4. WORKDIR cataloged and exists
 
-**Catalog (workstation):** The **Nodes** row for **`cloud-task-ocr`** has a non-empty **WORKDIR** cell.
+**Workstation:** Nodes row for **`cloud-task-ocr`** has **WORKDIR** set.
 
-**On the instance:**
+**Instance:**
 
 ```bash
 cd /home/ubuntu/ocr-work
-test -d "$(pwd -P)" \
-  && echo "PASS: WORKDIR exists at $(pwd -P)" \
-  || echo "FAIL: WORKDIR missing or not a directory"
+test -d "$(pwd -P)" && echo "PASS: WORKDIR at $(pwd -P)" || echo "FAIL"
 ```
-Expected: `PASS: WORKDIR exists at /home/ubuntu/ocr-work`
+Expected: `PASS: WORKDIR at /home/ubuntu/ocr-work`
 
-### 5. WORKDIR is a flat directory with venv, not inside the project repo clone
+### 5. WORKDIR layout
 
 ```bash
-test -d venv \
-  && case "$(pwd -P)" in */agentic-cloud-task|*/agentic-cloud-task/*)
-       echo "FAIL: WORKDIR must not be inside the agentic-cloud-task repo path"
-       ;;
-     *)
-       echo "PASS: WORKDIR layout and isolation OK"
-       ;;
-  esac
+test -d venv && case "$(pwd -P)" in */agentic-cloud-task|*/agentic-cloud-task/*) echo "FAIL: inside repo" ;; *) echo "PASS: layout OK" ;; esac
 ```
-Expected: `PASS: WORKDIR layout and isolation OK`
+Expected: `PASS: layout OK`
 
-### 6. A Python venv exists
+### 6. Python venv
 
 ```bash
-[ -d venv ] && venv/bin/python --version 2>/dev/null \
-    && echo "PASS: venv exists and python works" \
-    || echo "FAIL: venv missing or broken"
+[ -d venv ] && venv/bin/python --version && echo "PASS: venv" || echo "FAIL"
 ```
-Expected: `Python 3.10.12` then `PASS: venv exists and python works`
+Expected: `Python 3.10.x` then `PASS: venv`
 
-### 7. Docling is installed with the RapidOCR extra
+### 7. Docling + RapidOCR imports
 
 ```bash
 venv/bin/python -c "
-from docling.document_converter import DocumentConverter
+from docling.document_converter import DocumentConverter, PdfFormatOption, ImageFormatOption
 from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions, AcceleratorOptions, AcceleratorDevice
-from docling.datamodel.base import InputFormat
-print('PASS: docling + RapidOCR imports OK')
+from docling.datamodel.base_models import InputFormat
+print('PASS: imports')
 "
 ```
-Expected: `PASS: docling + RapidOCR imports OK`
+Expected: `PASS: imports`
 
-### 8. `onnxruntime-gpu` is installed with CUDAExecutionProvider
+### 8. `onnxruntime-gpu` CUDA EP
 
 ```bash
 venv/bin/python -c "
 import onnxruntime as ort
-providers = ort.get_available_providers()
-assert 'CUDAExecutionProvider' in providers, f'FAIL: CUDA not in {providers}'
-print(f'PASS: CUDAExecutionProvider available (providers={providers})')
+assert 'CUDAExecutionProvider' in ort.get_available_providers()
+print('PASS: CUDAExecutionProvider')
 "
 ```
-Expected: `PASS: CUDAExecutionProvider available (providers=[..., 'CUDAExecutionProvider', ...])`
+Expected: `PASS: CUDAExecutionProvider`
 
-### 9. GPU is accessible
+### 9. GPU accessible
 
 ```bash
-nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null \
-    && echo "PASS: GPU accessible" \
-    || echo "FAIL: nvidia-smi failed"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader && echo "PASS: GPU"
 ```
-Expected: `Tesla T4, <driver>, 15360 MiB` then `PASS: GPU accessible`
+Expected: `Tesla T4, ...` then `PASS: GPU`
 
-### 10. AMI bake readiness — instance is bake-ready
+### 10. PyTorch CUDA + RapidOCR torch options
 
-_Audit: pre-bake purge checks per base-gpu-node Audit §10, plus confirmation
-that the OCR stack is installed and functional before snapshot._
+```bash
+venv/bin/python -c "
+import torch
+assert torch.cuda.is_available()
+from docling.datamodel.pipeline_options import RapidOcrOptions
+RapidOcrOptions(backend='torch', force_full_page_ocr=True)
+print('PASS: torch CUDA + RapidOcrOptions torch')
+"
+```
+Expected: `PASS: torch CUDA + RapidOcrOptions torch`
+
+### 11. PDF smoke (torch pipeline)
+
+Requires `/home/ubuntu/ocr-work/test.pdf`.
+
+```bash
+cd /home/ubuntu/ocr-work
+source venv/bin/activate
+venv/bin/python -c "
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions, AcceleratorOptions, AcceleratorDevice
+from docling.datamodel.base_models import InputFormat
+po = PdfPipelineOptions(
+    do_ocr=True, do_table_structure=True,
+    ocr_options=RapidOcrOptions(backend='torch', force_full_page_ocr=True),
+    ocr_batch_size=16,
+    accelerator_options=AcceleratorOptions(device=AcceleratorDevice.CUDA, num_threads=4),
+)
+cv = DocumentConverter(allowed_formats=[InputFormat.PDF], format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=po)})
+r = cv.convert('/home/ubuntu/ocr-work/test.pdf')
+assert r.status.value == 'success'
+print('PASS: PDF smoke torch')
+"
+```
+Expected: `PASS: PDF smoke torch`
+
+### 12. Canonical torch evaluation capture
+
+```bash
+export OCR_WORKDIR=/home/ubuntu/ocr-work
+RUN_ID=2026-04-08_docling-torch-round2-v1
+RUN="$OCR_WORKDIR/runs/$RUN_ID"
+test -d "$OCR_WORKDIR/sample_scan" && echo "PASS: sample_scan" || echo "FAIL: sample_scan"
+test -f "$RUN/timings.json" && echo "PASS: timings.json" || echo "FAIL"
+test -f "$RUN/SUMMARY.md" && echo "PASS: SUMMARY.md" || echo "FAIL"
+test -d "$RUN/outputs/cuda" && test -d "$RUN/outputs/cpu" && echo "PASS: outputs" || echo "FAIL"
+test -f "$RUN/run_benchmark.py" && echo "PASS: script" || echo "FAIL"
+python3 -c "
+import json, os
+run = '$RUN'
+with open(os.path.join(run, 'timings.json')) as f: d = json.load(f)
+assert d.get('benchmark_round') == 2 and d.get('rapidocr_backend') == 'torch'
+for r in d['rows']:
+    assert r.get('cuda_status') == 'success' and r.get('cpu_status') == 'success'
+assert d['totals'].get('ratio_cpu_per_cuda') is not None
+print('PASS: torch capture shape')
+"
+```
+Expected: lines ending with `PASS: torch capture shape`
+
+### 13. AMI bake readiness
+
+**Transfer layout:** Target State item is still placeholder — **no scripted audit** until inbox/batch paths are specified.
+
+**AMI:** Pre-bake purge per [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) Audit §10; confirm OCR stack + §11 smoke before snapshot.
+
+---
+
+## Appendix A — Alternate RapidOCR backends (reference)
+
+Not part of the **profiled default**. Use only for comparison or legacy workflows.
+
+| Backend | Notes |
+|---------|--------|
+| **ONNX** (implicit `RapidOcrOptions()`) | RapidOCR det/rec on **CPU**; Docling layout on **GPU** — partial GPU. Script: [`dev-benchmark/r1-onnx.py`](dev-benchmark/r1-onnx.py). |
+| **paddle** | Requires `paddlepaddle-gpu`, `rapidocr-paddle`. Script: [`dev-benchmark/r3-paddle.py`](dev-benchmark/r3-paddle.py). Install fragment: [Appendix C.1](#c1-paddlepaddle--rapidocr-paddle). |
+
+---
+
+## Appendix B — Historical benchmark matrix (reference)
+
+Superseded for **convergence** by the torch Target State above; retained for timing/spacing experiments.
+
+| Round | Script | Notes |
+|-------|--------|--------|
+| 1 | [`dev-benchmark/r1-onnx.py`](dev-benchmark/r1-onnx.py) | ONNX RapidOCR; CUDA vs CPU Docling |
+| 2 | [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py) | **Canonical baseline** (profiled default) |
+| 3 | [`dev-benchmark/r3-paddle.py`](dev-benchmark/r3-paddle.py) | Paddle |
+| 4–6 | [`r4-onnx-spacing.py`](dev-benchmark/r4-onnx-spacing.py) … [`r6-paddle-spacing.py`](dev-benchmark/r6-paddle-spacing.py) | GPU-only, spacing params |
+| 7 | [`r7-paddle-tuned.py`](dev-benchmark/r7-paddle-tuned.py) | Paddle tuned |
+
+Spacing heuristics: [`ocr-spacing-assess.py`](ocr-spacing-assess.py). Session note: [`2026-04-08_spacing-assess-latest-lot.md`](2026-04-08_spacing-assess-latest-lot.md).
+
+---
+
+## Appendix C — Optional Apply fragments
+
+### C.1 PaddlePaddle + rapidocr-paddle
+
+```bash
+cd /home/ubuntu/ocr-work
+source venv/bin/activate
+pip install paddlepaddle-gpu==2.6.2 -f https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/stable.html
+pip install rapidocr-paddle
+python -c "import paddle; paddle.utils.run_check()"
+```
+
+Pick wheel matching CUDA/driver per [Paddle install](https://www.paddlepaddle.org.cn/install/quick).
+
+### C.2 Round 1 (ONNX) evaluation capture
+
+```bash
+export OCR_WORKDIR=/home/ubuntu/ocr-work
+RUN_ID=2026-04-08_docling-gpu-eval-v1
+mkdir -p "$OCR_WORKDIR/runs/$RUN_ID"
+cp profiling/ocr-batch/dev-benchmark/r1-onnx.py "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py"
+source "$OCR_WORKDIR/venv/bin/activate"
+python "$OCR_WORKDIR/runs/$RUN_ID/run_benchmark.py" "$OCR_WORKDIR/runs/$RUN_ID"
+```
+
+### C.3 Rounds 4–7 GPU-spacing / tuned drivers
+
+See filenames in [Appendix B](#appendix-b--historical-benchmark-matrix-reference); copy `ocr_spacing_fix.py` next to drivers when symlinks are not used.
+
+---
+
+## Appendix D — Optional Audit snippets (historical)
+
+**Round 1 capture** (`2026-04-08_docling-gpu-eval-v1`): `timings.json` rows with `cuda_status`/`cpu_status`, `ratio_cpu_per_cuda`; `outputs/cuda` + `outputs/cpu`.
+
+**Round 3 paddle** (`2026-04-08_docling-paddle-round3-v1`): `benchmark_round == 3`, `rapidocr_backend == "paddle"`.
+
+Use only when validating legacy run directories; **not** required for torch profile convergence.

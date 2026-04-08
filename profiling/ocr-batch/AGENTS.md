@@ -18,13 +18,35 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 | File | Role |
 |------|------|
-| [ocr-batch.profile.md](ocr-batch.profile.md) | State convergence profile for the OCR batch environment (Target State / Apply / Audit) |
+| [ocr-batch.profile.md](ocr-batch.profile.md) | State convergence profile (Target State / Apply / Audit): **torch-first** default; ONNX/paddle and historical benchmark material live in **appendices**. |
+
+### Dev benchmarks (`sample_scan/` timing drivers)
+
+| Location | Role |
+|----------|------|
+| [dev-benchmark/](dev-benchmark/AGENTS.md) | `r1-onnx.py` … `r7-paddle-tuned.py` — short names; canonical baseline **`r2-torch.py`**. |
+
+### Utilities
+
+| File | Role |
+|------|------|
+| [ocr_spacing_fix.py](ocr_spacing_fix.py) | Post-export spacing hook for spacing rounds (`apply_spacing_fix`, `SPACING_FIX_REVISION`). |
+| [ocr-spacing-assess.py](ocr-spacing-assess.py) | Heuristic spacing comparison across run dirs; `--discover` scans `$OCR_WORKDIR/runs`. |
 
 ### Session history
 
 | File | Role |
 |------|------|
-| [2026-04-08_build-session-1.md](2026-04-08_build-session-1.md) | First build session: instance launched, base converged, Docling + RapidOCR + onnxruntime-gpu installed. Hand-off for on-device continuation. |
+| [2026-04-08_build-session-1.md](2026-04-08_build-session-1.md) | Build + on-device continuation: stack installed; Docling 2.x PDF smoke test passed; profile back-filled (imports, `PdfFormatOption`, Audit §11). |
+| [2026-04-08_ocr-batch-commit-report.md](2026-04-08_ocr-batch-commit-report.md) | **Commit snapshot:** torch default decision, headline timings, spacing heuristic summary, software pins; instance `WORKDIR` not retained past shutdown. |
+
+### Increment closeouts
+
+| File | Role |
+|------|------|
+| [2026-04-08_round-2-torch-closeout.md](2026-04-08_round-2-torch-closeout.md) | Round 2 closed: torch benchmark task, repo vs instance state delta, interpretation pointer. |
+| [2026-04-08_round-3-paddle-closeout.md](2026-04-08_round-3-paddle-closeout.md) | Round 3 closed: Paddle + `rapidocr-paddle`, benchmark capture, install note for wheel version. |
+| [2026-04-08_spacing-assess-latest-lot.md](2026-04-08_spacing-assess-latest-lot.md) | Spacing heuristic matrix for rounds 1–7 + latest-lot (4–7) notes; produced with `ocr-spacing-assess.py`. |
 
 ## User Design Brief
 

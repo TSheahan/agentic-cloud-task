@@ -149,3 +149,50 @@ GPU.
 | `profiling/ocr-batch/AGENTS.md` | Updated — added profile reference and contents table |
 | `cloud-resources.md` | Updated — Nodes row and SSH commands for cloud-task-ocr |
 | `profiling/ocr-batch/2026-04-08_build-session-1.md` | This file |
+
+### Session 2 file changes
+
+| File | Change |
+|------|--------|
+| `profiling/ocr-batch/ocr-batch.profile.md` | Smoke-test Target State; Apply §3b + API notes; Audit §7 imports; Audit §11; bake gated on smoke |
+| `profiling/ocr-batch/2026-04-08_build-session-1.md` | Session 2 continuation appended |
+
+---
+
+## Session 2 continuation (same day, on-instance)
+
+### Done
+
+- **Docling smoke test passed.** Generated `test.pdf` on the instance (Pillow +
+  `img2pdf` — `img2pdf` installed in venv for this test only). One-page image
+  PDF with rendered Latin text.
+- **Conversion:** `ConversionStatus.SUCCESS`. Sample export line (Markdown):
+  `## OCR smoketest 2026-04-08` (expected minor OCR variance vs source string
+  `"OCR smoke test 2026-04-08"`).
+- **Timing (indicative):** ~39 s CPU time for first full run after cold start
+  (includes first-time Hugging Face weight download + layout model load); ~67 s
+  wall clock in that run. Repeat run ~12 s wall (same converter path; still
+  logs layout weight load).
+- **Imports / API:** Docling 2.x uses `InputFormat` from
+  `docling.datamodel.base_models` (not `datamodel.base`). `DocumentConverter`
+  takes PDF options via
+  `format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=...)}`.
+- **Profile back-fill:** `ocr-batch.profile.md` updated — Target State smoke
+  item, Apply §3b, Audit §7 import fix, Audit §11 (slow smoke), bake gate tied
+  to smoke success.
+
+### Still open (unchanged from Session 1 unless noted)
+
+- Headless auth for `agent` / `gh` if needed.
+- Batch folder layout (inbox / processing / outbox) — still TBD.
+- AMI bake after you are satisfied with stack validation.
+- Optional: pin `img2pdf` in a small `requirements-smoke.txt` or document only
+  (not installed by default).
+
+### Suggested next steps
+
+1. Decide **batch directory layout** and add concrete Target State + Apply for
+   mkdir/rsync conventions.
+2. **Processing script** skeleton that reads from inbox, writes to outbox, uses
+   the `PdfFormatOption` pattern above.
+3. **AMI bake** when ready.
