@@ -18,7 +18,8 @@ pattern is defined in
 load that file at the start of execution for the full methodology.
 
 Companion to [create-convergence-profile](../create-convergence-profile/SKILL.md),
-which handles authoring. This skill handles runtime.
+which handles authoring, and [develop-convergence-profile](../develop-convergence-profile/SKILL.md),
+which handles interactive profile growth before execution. This skill handles runtime.
 
 ## Workflow
 

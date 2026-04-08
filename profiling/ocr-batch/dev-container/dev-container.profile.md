@@ -1,82 +1,51 @@
 # OCR Batch Container — State Convergence Profile
 
-Containerized OCR processor for **AWS Batch**. Wraps the torch-first
-Docling + RapidOCR pipeline from
-[ocr-batch.profile.md](../ocr-batch.profile.md) into a Docker image that
-receives a PDF via S3, converts it, and uploads structured output.
+**Twofold goal**
 
-Prerequisite: the OCR instance is launched and the bare-metal OCR stack is
-converged per [ocr-batch.profile.md](../ocr-batch.profile.md) — Docker is
-built on-instance before pushing to ECR.
+1. **Interim poke** — SSH to the instance and exercise **Docling + RapidOCR paddle** on the **GPU** without crossing the container boundary (fast learning and debugging).
+2. **Thin Docker image** — **Compose, build, and run** a **small** image (glue only) for **AWS Batch**, with **Paddle** supplied from the **AMI**, not baked into the image.
+
+**Architecture:** **PaddlePaddle GPU** and the **native Python stack** used for poke live on the **custom AMI** (declarative bake). The container image carries only lightweight Python deps (`docling`, `rapidocr-paddle`, boto3, pydantic) — **no** `paddlepaddle-gpu`, **no** Torch/ONNX GPU wheels in the image.
+
+**Native vs venv:** Convergence assumes **system (or single-prefix) Python** — e.g. `apt` / **`pip install` to system** or an **`/opt/...`** tree on `PATH` — **not** a long-lived **`WORKDIR/venv`** as the **source of truth**. An old torch-first venv under `~/ocr-work/venv` is **migration / interim** only; **after this Target State is checked in**, the **intended** path is **rebuild from a clean base AMI** and bake **native** installs so the disk is **not** carrying conflicting stacks.
+
+Layering: [ocr-batch](../ocr-batch.profile.md) for **nodes, SSH, WORKDIR** catalog; [ocr-batch.profile.md](../ocr-batch.profile.md) **torch-first** path remains **reference** for bare-metal torch; **this profile** is **paddle + thin container** for Batch.
 
 Follows the [state convergence pattern](../../../policies/state-convergence-pattern.md).
 
-Starting theory: [`01-starting-theory-of-container.md`](01-starting-theory-of-container.md)
-(pre-profile brain dump; superseded by this profile for convergence purposes).
+Superseded exploratory notes: [`01-starting-theory-of-container.md`](01-starting-theory-of-container.md).
 
 ---
 
 ## Target State
 
-### Container source artifacts (repo-committed)
+### Goal 1 — Interim poke (AMI, native Python)
 
-- **`Dockerfile` exists and is aligned with the torch-first OCR profile.**
-  Base image: `nvidia/cuda:12.6.0-runtime-ubuntu22.04`. Installs Python
-  3.10, system deps, PyTorch (CUDA, from PyTorch index), then
-  `requirements.txt`. Copies `processor.py`. Entrypoint:
-  `python3 processor.py`.
+- **AMI supports Docling + paddle poke via native Python and a clean bake lineage.** **`paddlepaddle-gpu`**, **Docling**, and **`rapidocr-paddle`** are installed for the **poke interpreter** (default **`python3`** on `PATH`, or one **declared** `/opt/...` path — AMI bake owns the matrix). **`import paddle`** reports **≥1 CUDA device**; **`import docling`** succeeds; scripts such as [`r3-paddle.py`](../dev-benchmark/r3-paddle.py) run **without Docker**. The golden image is **declarative from a known base** (e.g. DL Base GPU) plus **native** (`apt` / system `pip` / `--prefix`) installs — **not** by treating **`~/ocr-work/venv`** as the convergence source of truth. **After this profile is checked in, rebuild from a clean base AMI** before bake so the disk is not carrying conflicting torch/venv experiments. The thin **Dockerfile** still must **not** install `paddlepaddle-gpu`, Torch CUDA, or `onnxruntime-gpu`.
 
-- **`requirements.txt` lists the torch-first dependency set.**
-  `docling[rapidocr]>=2.0.0`, `onnxruntime-gpu<=1.22`, `boto3`,
-  `pydantic`. No paddle dependencies. Torch installed separately in
-  Dockerfile for CUDA index URL control.
+### Goal 2 — Thin Docker image (repo + runtime)
 
-- **`processor.py` implements the S3-to-S3 Docling 2.x torch pipeline.**
-  S3 download → Docling conversion → S3 upload (`.md`, `.json`,
-  `COMPLETED` artifact). Uses `format_options=` (not top-level
-  `pipeline_options=`), `RapidOcrOptions(backend="torch",
-  force_full_page_ocr=True)`, `AcceleratorOptions(device=CUDA)`. Import
-  path: `docling.datamodel.base_models.InputFormat`.
+- **`Dockerfile` is minimal and uses the CUDA runtime base only.** `FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04`; system deps + `pip install -r requirements.txt` only — **no** Torch, **no** ONNX GPU, **no** Paddle wheels in the Dockerfile.
 
-### Instance runtime (on cloud-task-ocr)
+- **`requirements.txt` lists only lightweight Python glue:** `docling`, `rapidocr-paddle`, `boto3`, `pydantic` (and acceptable transitive deps). It must **not** list `paddlepaddle-gpu`, `onnxruntime-gpu`, or PyTorch.
 
-- **Docker engine is available on the OCR instance.** `docker --version`
-  succeeds; `nvidia-container-toolkit` is installed so the `--gpus` flag
-  works with the T4.
+- **`processor.py` implements Docling 2.x with RapidOCR paddle on CUDA and the three-output contract.** **S3 mode:** argv `<input_s3_uri> <output_s3_prefix>`. **Local mode:** `OCR_LOCAL_FILE` + **`OCR_LOCAL_OUTPUT_DIR`**. **`RapidOcrOptions(backend="paddle", force_full_page_ocr=True)`**, **`AcceleratorOptions(device=CUDA)`**, `format_options` for PDF and image. Outputs: **`export_to_markdown()`**, **`export_to_dict()`**, plus **copy of input file**.
 
-- **Container image builds successfully.** `docker build -t
-  ocr-docling-gpu:latest .` exits 0 from the dev-container directory on
-  the instance.
+- **Docker engine is available:** `docker --version` succeeds; **`nvidia-container-toolkit`** is installed so `docker run --gpus all` works.
 
-- **Container has GPU access.** `docker run --rm --gpus all
-  ocr-docling-gpu:latest` can see the T4 via `nvidia-smi` and
-  `torch.cuda.is_available()` returns True.
+- **Container image builds successfully** from `dev-container/`; production intent **&lt;150 MB compressed** when pushed (local size is a proxy until first publish).
 
-- **Container smoke test passes.** Running processor.py inside the
-  container against a test PDF produces `SUCCESS` status and non-empty
-  Markdown output.
+- **Containerized runs can use Paddle on GPU** via **AMI → container** binding (bind-mounts / `PYTHONPATH` — paths in **AMI bake**). Without binding, `import paddle` inside the container fails even if `nvidia-smi` works.
+
+- **Container smoke test passes** with `OCR_LOCAL_*` and Apply **§6** mounts: **three production artifacts** under the output dir (e.g. test media under [`test-media/`](../test-media/)).
 
 ---
 
 ## Apply
 
-### 1. Create container source files (workstation)
+### 1. Source files (workstation)
 
-Corrected from [`01-starting-theory-of-container.md`](01-starting-theory-of-container.md)
-to align with the profiled torch-first default. Key corrections from the
-theory:
-
-- **requirements.txt:** `docling[rapidocr]` replaces `rapidocr-paddle`;
-  `onnxruntime-gpu<=1.22` added (EC2 g4dn DRM pin).
-- **processor.py:** `format_options={...}` replaces top-level
-  `pipeline_options=`; `RapidOcrOptions(backend="torch")` replaces
-  `use_gpu=True` / paddle; import from `base_models` not `base`;
-  `export_to_markdown()` returns string (not a file-writer).
-- **Dockerfile:** torch installed from PyTorch CUDA index before
-  `requirements.txt`; no `rapidocr-paddle` in the image.
-
-Files committed at `profiling/ocr-batch/dev-container/`:
-`Dockerfile`, `requirements.txt`, `processor.py`.
+Files live at `profiling/ocr-batch/dev-container/`: `Dockerfile`, `requirements.txt`, `processor.py` — **no** `paddlepaddle-gpu` in Dockerfile or `requirements.txt`.
 
 ### 2. Transfer to instance
 
@@ -84,127 +53,165 @@ Files committed at `profiling/ocr-batch/dev-container/`:
 rsync -avz profiling/ocr-batch/dev-container/ cloud-task-ocr:/home/ubuntu/ocr-work/dev-container/
 ```
 
-### 3. Ensure Docker availability
+### 3. AMI: native Python stack for poke (bake recipe)
 
-*Stub — runtime-dependent.* The AWS DL Base GPU AMI may or may not include
-Docker and the NVIDIA container toolkit. Check first:
+Install **`paddlepaddle-gpu`**, **Docling**, and **`rapidocr-paddle`** with the **system** interpreter (or a **single `/opt/...` prefix** on `PATH`) per the AMI bake — **not** into `~/ocr-work/venv` as the long-term contract. Version/CUDA matrix lives in the bake profile.
+
+Smoke on the baked instance:
+
+```bash
+python3 -c "import paddle; import docling; print('poke ok', paddle.__version__, paddle.device.cuda.device_count())"
+```
+
+Benchmark driver: [`dev-benchmark/r3-paddle.py`](../dev-benchmark/r3-paddle.py).
+
+### 4. Ensure Docker availability
 
 ```bash
 docker --version
 dpkg -l | grep nvidia-container-toolkit
 ```
 
-If missing, install (on-instance):
+Install if missing (adapt for AMI Ubuntu version):
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y docker.io nvidia-container-toolkit
 sudo usermod -aG docker ubuntu
 sudo systemctl restart docker
-# re-login for group change
 ```
 
-Exact package names may vary with the AMI's Ubuntu version; adapt at
-runtime.
-
-### 4. Build image
+### 5. Build tiny image
 
 ```bash
 cd /home/ubuntu/ocr-work/dev-container
 docker build -t ocr-docling-gpu:latest .
 ```
 
-Build time is significant (PyTorch download + docling deps). Watch for:
-- CUDA version mismatch between the container base image (12.6) and the
-  torch wheel index (`cu124`). If torch reports no CUDA at runtime, the
-  index URL in the Dockerfile may need updating.
-- `onnxruntime-gpu` version conflicts with the torch install.
+### 6. Expose AMI Paddle to the container (runtime binding)
 
-### 5. GPU smoke test
+*Agentic — paths come from AMI bake.* Example pattern (adjust host paths after bake):
 
 ```bash
-docker run --rm --gpus all ocr-docling-gpu:latest \
-    python3 -c "import torch; assert torch.cuda.is_available(); print('GPU OK')"
+# Illustrative only — replace with paths from the AMI profile
+docker run --rm --gpus all \
+  -v /path/on/ami/to/paddle-packages:/paddle:ro \
+  -e PYTHONPATH=/paddle \
+  ...
 ```
 
-### 6. Full smoke test
+Until mounts are fixed in the bake profile, full GPU paddle **inside** the container may not pass; **host-side** paddle (Apply §3) still validates the OCR stack.
 
-*Stub — depends on S3 test bucket or a local-path mode added to
-processor.py.* Minimal approach: volume-mount a test PDF and run a local
-conversion. Full S3 test requires bucket + IAM role configuration (future
-Apply step — AWS Batch infrastructure).
+### 7. GPU sanity in container (no Torch)
+
+Use **`--entrypoint`** so arguments are not passed to `processor.py`:
+
+```bash
+docker run --rm --gpus all --entrypoint nvidia-smi ocr-docling-gpu:latest
+```
+
+Optional: `python3 -c "import paddle; print(paddle.device.cuda.device_count())"` **after** Apply §6 mount works.
+
+### 8. Full smoke test (local env)
+
+Mount repo test media and a writable product dir, set `OCR_LOCAL_FILE` / `OCR_LOCAL_OUTPUT_DIR`, plus **§6** Paddle mounts:
+
+```bash
+mkdir -p /home/ubuntu/ocr-work/product
+docker run --rm --gpus all \
+  -v /home/ubuntu:/host \
+  # ... add Paddle bind mounts from §6 ...
+  -e OCR_LOCAL_FILE=/host/agentic-cloud-task/profiling/ocr-batch/test-media/service-invoice.jpg \
+  -e OCR_LOCAL_OUTPUT_DIR=/host/ocr-work/product \
+  ocr-docling-gpu:latest
+```
+
+**S3 Batch path** — future Apply: IAM + bucket + `processor.py s3://… s3://…`.
 
 ---
 
 ## Audit
 
-### 1. Dockerfile exists and is torch-aligned
+### 0. AMI poke stack — native `python3` (on-instance)
+
+After bake / Apply §3 — use the **same** interpreter the AMI declares (usually **`python3`**, not `~/ocr-work/venv`):
+
+```bash
+python3 -c "import paddle; import docling; assert paddle.device.cuda.device_count() >= 1; print('PASS: poke stack')" 2>/dev/null || echo "FAIL: poke stack"
+```
+
+Expected: `PASS: poke stack`.
+
+### 1. Dockerfile is minimal (no heavy ML wheels in build)
 
 ```bash
 test -f profiling/ocr-batch/dev-container/Dockerfile && echo "PASS" || echo "FAIL"
-grep -q 'whl/cu' profiling/ocr-batch/dev-container/Dockerfile && echo "PASS: torch CUDA index" || echo "FAIL"
-! grep -q paddle profiling/ocr-batch/dev-container/Dockerfile && echo "PASS: no paddle" || echo "FAIL"
+grep -q 'FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04' profiling/ocr-batch/dev-container/Dockerfile && echo "PASS: FROM" || echo "FAIL"
+! grep -qiE 'paddlepaddle-gpu|torch|onnxruntime' profiling/ocr-batch/dev-container/Dockerfile && echo "PASS: no heavy wheels in Dockerfile" || echo "FAIL"
 ```
 
 Expected: three PASS lines.
 
-### 2. requirements.txt is torch-first
+### 2. requirements.txt is glue-only
 
 ```bash
-grep -q 'docling\[rapidocr\]' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: docling[rapidocr]" || echo "FAIL"
-grep -q 'onnxruntime-gpu' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: onnxruntime-gpu" || echo "FAIL"
-! grep -q paddle profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: no paddle" || echo "FAIL"
+grep -q 'docling' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: docling" || echo "FAIL"
+grep -q 'rapidocr-paddle' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: rapidocr-paddle" || echo "FAIL"
+grep -q 'boto3' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: boto3" || echo "FAIL"
+grep -q 'pydantic' profiling/ocr-batch/dev-container/requirements.txt && echo "PASS: pydantic" || echo "FAIL"
+grep -v '^#' profiling/ocr-batch/dev-container/requirements.txt | grep -qE 'paddlepaddle-gpu|torch|onnxruntime' && echo "FAIL: forbidden wheel" || echo "PASS: no forbidden wheels in deps"
 ```
 
-Expected: three PASS lines.
+Expected: five PASS lines.
 
-### 3. processor.py uses Docling 2.x torch API
+### 3. processor.py uses Docling 2.x paddle API
 
 ```bash
 grep -q 'format_options' profiling/ocr-batch/dev-container/processor.py && echo "PASS: format_options" || echo "FAIL"
-grep -q 'backend="torch"' profiling/ocr-batch/dev-container/processor.py && echo "PASS: torch backend" || echo "FAIL"
-grep -q 'base_models' profiling/ocr-batch/dev-container/processor.py && echo "PASS: base_models import" || echo "FAIL"
+grep -q 'backend="paddle"' profiling/ocr-batch/dev-container/processor.py && echo "PASS: paddle backend" || echo "FAIL"
+grep -q 'OCR_LOCAL_FILE' profiling/ocr-batch/dev-container/processor.py && echo "PASS: OCR_LOCAL_FILE" || echo "FAIL"
+grep -q 'OCR_LOCAL_OUTPUT_DIR' profiling/ocr-batch/dev-container/processor.py && echo "PASS: OCR_LOCAL_OUTPUT_DIR" || echo "FAIL"
+grep -q 'export_to_dict' profiling/ocr-batch/dev-container/processor.py && echo "PASS: export_to_dict" || echo "FAIL"
+grep -q 'ImageFormatOption' profiling/ocr-batch/dev-container/processor.py && echo "PASS: ImageFormatOption" || echo "FAIL"
+grep -q 'shutil.copy2' profiling/ocr-batch/dev-container/processor.py && echo "PASS: original preserved" || echo "FAIL"
 ! grep -q 'pipeline_options=pipeline_options)$' profiling/ocr-batch/dev-container/processor.py && echo "PASS: no top-level pipeline_options" || echo "FAIL"
 ```
 
-Expected: four PASS lines.
+Expected: eight PASS lines.
 
 ### 4. Docker available on instance
 
-*Stub — run on-instance (ssh cloud-task-ocr).*
-
 ```bash
 docker --version && echo "PASS: docker" || echo "FAIL"
-docker info 2>/dev/null | grep -q 'Runtimes.*nvidia' && echo "PASS: nvidia runtime" || echo "FAIL"
+docker info 2>/dev/null | grep -q 'nvidia.com/gpu' && echo "PASS: nvidia CDI/runtime" || echo "FAIL"
 ```
 
-Expected: two PASS lines. If Docker is not yet installed, this check
-identifies the gap for Apply §3.
+Expected: two PASS lines.
 
-### 5. Image builds
-
-*Stub — run on-instance after Apply §4.* Presence of the built image:
+### 5. Image exists (on-instance, after build)
 
 ```bash
 docker images ocr-docling-gpu --format '{{.Repository}}:{{.Tag}}' | grep -q 'ocr-docling-gpu:latest' \
     && echo "PASS: image exists" || echo "FAIL"
 ```
 
-### 6. GPU access inside container
-
-*Stub — run on-instance after build.*
+### 6. NVIDIA device in container
 
 ```bash
-docker run --rm --gpus all ocr-docling-gpu:latest \
-    python3 -c "import torch; assert torch.cuda.is_available(); print('PASS: GPU')"
+docker run --rm --gpus all --entrypoint nvidia-smi ocr-docling-gpu:latest \
+    --query-gpu=name --format=csv,noheader && echo "PASS: nvidia-smi" || echo "FAIL"
 ```
 
-Expected: `PASS: GPU`.
+### 7. Container smoke (three artifacts; requires §6 Paddle binding when running in container)
 
-### 7. Container smoke test
+On-instance, after a successful run to `OCR_LOCAL_OUTPUT_DIR`:
 
-*Stub — depends on S3 bucket or local-path mode.* Not yet auditable;
-requires Apply §6 infrastructure or a local-only test harness in
-processor.py.
+```bash
+test -s /home/ubuntu/ocr-work/product/service-invoice.md && echo "PASS: markdown" || echo "FAIL"
+test -s /home/ubuntu/ocr-work/product/service-invoice.json && echo "PASS: json" || echo "FAIL"
+test -f /home/ubuntu/ocr-work/product/service-invoice.jpg && echo "PASS: original" || echo "FAIL"
+```
+
+Adjust basename to match `OCR_LOCAL_FILE`. Expected: three PASS lines.
 
 ---

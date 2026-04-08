@@ -11,5 +11,5 @@ Layers on [ocr-batch](../AGENTS.md) (instance must be converged first).
 | [01-starting-theory-of-container.md](01-starting-theory-of-container.md) | Pre-profile brain dump (Dockerfile + processor + ECR push); superseded by the profile for convergence |
 | [Dockerfile](Dockerfile) | NVIDIA CUDA runtime base, Python 3.10, torch CUDA, docling stack |
 | [requirements.txt](requirements.txt) | Python deps for the container (torch-first, no paddle) |
-| [processor.py](processor.py) | S3→Docling 2.x torch pipeline→S3 batch processor |
+| [processor.py](processor.py) | S3→Docling 2.x RapidOCR paddle→S3 batch processor; three-output contract; local env via `OCR_LOCAL_*` |
 | [2026-04-09_container-dev-handoff.md](2026-04-09_container-dev-handoff.md) | Executing-agent handoff: situation, mission, Grok-sourced unknowns, sequence |

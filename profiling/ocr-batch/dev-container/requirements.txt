@@ -1,4 +1,5 @@
-docling[rapidocr]>=2.0.0
-onnxruntime-gpu<=1.22
+# Glue packages only; large native ML wheels are installed on the AMI, not listed here.
+docling>=2.0.0
+rapidocr-paddle
 boto3
 pydantic

@@ -13,7 +13,9 @@ Guide the user through creating a profile that declares a system's wanted
 state. The pattern is defined in
 [policies/state-convergence-pattern.md](../../../policies/state-convergence-pattern.md) —
 read that file first for the full methodology. This skill focuses on the
-creation workflow.
+creation workflow. For iterative, checkpoint-based co-authoring of Target
+State over multiple turns, see
+[develop-convergence-profile](../develop-convergence-profile/SKILL.md).
 
 ## Workflow
 
