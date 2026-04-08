@@ -1,5 +1,9 @@
 # OpenWakeWord training config — "hey Sara" (Cartesia-first happy path)
 #
+# Refined methodology: 10k samples, ~20 adversarial phrases, 2 augmentation
+# rounds, mandatory RIRs, multi-voice Cartesia generation (≥5 voices).
+# See oww-training-env.profile.md Target State for full rationale.
+#
 # Positive and adversarial-negative WAVs are pre-generated (Cartesia preferred)
 # and placed under output_dir/model_name/{positive_train,positive_test,
 # negative_train,negative_test}/ before running train without --generate_clips.
@@ -17,15 +21,29 @@ target_phrase:
   - "hey sara"
 
 custom_negative_phrases:
-  - "hey siri"
   - "hey sarah"
+  - "hey serra"
+  - "hey sarrah"
+  - "say sara"
+  - "say sarah"
+  - "hey tara"
   - "hey zara"
   - "hey sorry"
   - "say ra"
   - "hey there"
+  - "hey Clara"
+  - "hey Kara"
+  - "hey Lara"
+  - "hey Mara"
+  - "hey sora"
+  - "a sara"
+  - "hey siri"
+  - "hey Ciara"
+  - "hey Farrah"
+  - "hey sorry ah"
 
-n_samples: 3000
-n_samples_val: 500
+n_samples: 10000
+n_samples_val: 2000
 tts_batch_size: 50
 augmentation_batch_size: 16
 
@@ -44,19 +62,19 @@ background_paths_duplication_rate:
 
 false_positive_validation_data_path: "./validation_set_features.npy"
 
-augmentation_rounds: 1
+augmentation_rounds: 2
 
 feature_data_files:
   "ACAV100M_sample": "./openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
 
 batch_n_per_class:
   "ACAV100M_sample": 1024
-  "adversarial_negative": 50
-  "positive": 50
+  "adversarial_negative": 70
+  "positive": 70
 
 model_type: "dnn"
 layer_size: 32
 
-steps: 25000
+steps: 50000
 max_negative_weight: 1500
 target_false_positives_per_hour: 0.5

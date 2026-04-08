@@ -39,7 +39,15 @@ These items specialize the [base GPU node](../aws-deep-learning-base/base-gpu-no
 
 ### Synthetic clips (Cartesia happy path)
 
-- **Positive and adversarial-negative training WAVs are pre-placed** under `hey_sara_output/<model_name>/` in **`positive_train/`**, **`positive_test/`**, **`negative_train/`**, and **`negative_test/`** (defaults: `model_name` **`hey_sara`**, `output_dir` **`./hey_sara_output`** in `hey_sara_model.yml`). Each directory holds enough **`*.wav`** files for **`openwakeword.train`** to run **without** `--generate_clips` (upstream still imports `generate_samples` from `piper_sample_generator_path`; the shim **`./oww_train_shim`** satisfies that import and **must not** be invoked). **Preferred generator:** **Cartesia** — [`generate_samples.py`](generate_samples.py) with **`--backend cartesia`** (default). **One cloud provider** on the happy path; keep ElevenLabs/Deepgram as optional swaps in that script, not mixed targets in the same profile run. Positives: phrase **`hey Sara`** (see YAML `target_phrase`). Negatives: phrases aligned with `custom_negative_phrases` (see [`adversarial_phrases.example.txt`](adversarial_phrases.example.txt)); use **`--phrases-file`**. Counts must meet or exceed the **`n_samples`** / **`n_samples_val`** intent in `hey_sara_model.yml` (upstream uses a ~0.95 threshold when generation runs; pre-placing clips should match those totals so augmentation and training see a full set).
+- **Positive and adversarial-negative training WAVs are pre-placed** under `hey_sara_output/<model_name>/` in **`positive_train/`**, **`positive_test/`**, **`negative_train/`**, and **`negative_test/`** (defaults: `model_name` **`hey_sara`**, `output_dir` **`./hey_sara_output`** in `hey_sara_model.yml`). Each directory holds enough **`*.wav`** files for **`openwakeword.train`** to run **without** `--generate_clips` (upstream still imports `generate_samples` from `piper_sample_generator_path`; the shim **`./oww_train_shim`** satisfies that import and **must not** be invoked). **Preferred generator:** **Cartesia** — [`generate_samples.py`](generate_samples.py) with **`--backend cartesia`** (default). **One cloud provider** on the happy path; keep ElevenLabs/Deepgram as optional swaps in that script, not mixed targets in the same profile run.
+
+- **Positive clip counts are ≥ 10,000 train / ≥ 2,000 test.** Phrase: **`hey Sara`** (see YAML `target_phrase`). Counts must meet or exceed **`n_samples: 10000`** / **`n_samples_val: 2000`** in `hey_sara_model.yml`. Pre-placing clips should match those totals so augmentation and training see a full set.
+
+- **Positive clips are generated across ≥ 5 distinct Cartesia voices with varied prosody.** The generation set uses at least five different Cartesia voice IDs (not only "Allie") to ensure speaker diversity. Across the full clip set, generation varies speed (± 20%), pitch (± 10–20%), emphasis, and leading/trailing silence so the model generalises across speakers and speaking styles. The voice roster and variation parameters are documented in `generate_samples.py` or its invocation.
+
+- **Adversarial-negative clips use an expanded phonetically-curated phrase set.** The adversarial phrase list in [`adversarial_phrases.example.txt`](adversarial_phrases.example.txt) and the `custom_negative_phrases` field in `hey_sara_model.yml` contain **≈ 20 phonetically confusable phrases** — names that rhyme with or share consonant/vowel structure with "sara" (e.g. "hey sarah", "hey tara", "hey Clara", "hey Kara", "hey Lara"), consonant and vowel shifts (e.g. "hey serra", "hey sora", "say sara"), and common mis-hearings (e.g. "hey sorry", "hey siri", "hey there", "say ra"). Phrases that **contain** the wake phrase in a longer utterance (e.g. "hey sara please", "sara come here") are **excluded** — in the deployment environment no one named Sara is present, so any utterance containing "hey sara" is a genuine activation.
+
+- **Adversarial-negative clip counts match positive counts: ≥ 10,000 train / ≥ 2,000 test.** Generated with the same Cartesia multi-voice, varied-prosody approach as positives, driven by **`--phrases-file`**.
 
 ### Python environment
 
@@ -57,9 +65,9 @@ These items specialize the [base GPU node](../aws-deep-learning-base/base-gpu-no
 
 - **Training data files are present:**
   - `validation_set_features.npy` — from HuggingFace (`davidscripka/openwakeword_features`, filename `validation_set_features.npy`). Not `openwakeword_features.npy` (renamed upstream; 404).
-  - `openwakeword_features_ACAV100M_2000_hrs_16bit.npy` — negative feature data from the same HF dataset.
-  - `background_clips/` contains at least one audio file (e.g. a minimal 60s silence WAV) for false-positive training.
-  - `mit_rirs/` — MIT Room Impulse Responses (WAV files). Optional for a first pass; training proceeds without RIRs but reverb augmentation is skipped.
+  - `openwakeword_features_ACAV100M_2000_hrs_16bit.npy` — negative feature data from the same HF dataset. This is the dominant negative-class training signal (2,000 hours, ~5.6 M feature vectors), consumed directly during DNN training via `batch_n_per_class`.
+  - `background_clips/` contains audio files used for **noise overlay during the augmentation step** (before feature extraction — distinct from the ACAV100M features used during DNN training). Representative ambient audio from the deployment environment (e.g. kitchen ambience, TV, household noise) is recommended over the minimal silence placeholder accepted in earlier iterations. Even a few minutes of real background audio materially improves the realism of augmented clips. A silence-only placeholder still permits training but skips effective noise augmentation.
+  - `mit_rirs/` — MIT Room Impulse Responses (WAV files), sourced from the HuggingFace dataset `davidscripka/MIT_environmental_impulse_responses` (271 × 16 kHz WAVs). **RIRs are mandatory** — reverb augmentation is a standard part of the pipeline for producing far-field-realistic training features. Training proceeds without them but produces a weaker model; do not skip.
 
 Optional: set `HF_TOKEN` when downloading from HuggingFace to improve rate limits (unauthenticated requests work but may be throttled).
 
@@ -67,9 +75,35 @@ Optional: set `HF_TOKEN` when downloading from HuggingFace to improve rate limit
 
 - **`hey_sara_model.yml` is present** in the working directory. All relative paths in the YAML (`./oww_train_shim`, `./validation_set_features.npy`, `./hey_sara_output`, etc.) resolve from the working directory.
 
+- **Training parameters are calibrated for the 10k-sample data volume.** The YAML reflects:
+
+  | Parameter | Value | Rationale |
+  |-----------|-------|-----------|
+  | `n_samples` | 10,000 | Scaled from 3,000; aligns with OWW community practice for service-ready models |
+  | `n_samples_val` | 2,000 | Scaled from 500; matching |
+  | `steps` | 50,000 | Scaled roughly linearly with data volume (was 25,000 at 3k samples) |
+  | `augmentation_rounds` | 2 | Two rounds of noise/reverb/gain augmentation for richer feature diversity |
+  | `batch_n_per_class` | ACAV=1024, adversarial=70, positive=70 | Adversarial/positive raised from 50 to prevent under-sampling the expanded dataset |
+  | `model_type` | `dnn` | Unchanged — small footprint for edge deployment |
+  | `layer_size` | 32 | Unchanged — 2 layers × 32 units |
+  | `max_negative_weight` | 1,500 | Unchanged — class weighting, not data-volume dependent |
+  | `target_false_positives_per_hour` | 0.5 | Unchanged — appropriate for single-user home/kitchen deployment (OWW community range: 0.2–0.5) |
+
 ### Post-training output
 
 - **`hey_sara_output/hey_sara.onnx` exists** and is a valid ONNX model loadable by `openwakeword.model.Model`.
+
+- **A custom verifier model is trained and co-located with the base ONNX model.** The verifier is a lightweight logistic regression (on the same Google speech embeddings) that fires only when the base model score exceeds its threshold. It requires minimal real-speaker data: **≥ 3 WAV clips** of the deployment user (Tim) saying "hey Sara" in deployment-like conditions, plus **~10 seconds** of the user's non-wakeword speech. The verifier is trained via `openwakeword.train_custom_verifier()` and produces a `.pkl` file (e.g. `hey_sara_verifier.pkl`). At inference, it is loaded alongside the base model via the `custom_verifier_models` parameter on `openwakeword.model.Model`. This dramatically reduces false positives for single-user home deployment at near-zero cost.
+
+### Validation protocol
+
+- **A threshold-determination protocol runs on the deployment target after training.** The base model and verifier are loaded on the Pi (or equivalent deployment hardware). A standardised test session of **15–30 minutes** records continuous ambient audio from the deployment environment while the operator delivers **controlled "hey Sara" utterances** at varied distances and volumes. The protocol produces a **FAR (false accept rate) vs. threshold curve** from which the deployment threshold is selected, targeting ≤ 0.5 false positives per hour with false rejection rate < 5%. The chosen threshold is recorded as **deployment metadata** (e.g. environment variable or config file in the consuming application) — it is a deployment parameter, not a training parameter, and does not belong in `hey_sara_model.yml`.
+
+- **Smoke test passes on the deployment target.** [`smoke_test_model.py`](smoke_test_model.py) loads the ONNX model, feeds silent frames confirming zero scores, and optionally runs a live mic test. This is a necessary-but-not-sufficient gate; the threshold protocol above determines the production threshold.
+
+### Iteration methodology
+
+- **The training methodology supports up to two iterations, not open-ended refinement.** The first iteration uses the full synthetic pipeline (Cartesia multi-voice positives, expanded adversarial negatives, RIR-augmented features, ACAV100M background negatives). After deployment and the threshold-determination protocol, if the false-positive rate exceeds the target or false-rejection rate is unacceptable, a second iteration incorporates false-positive audio collected from the deployment environment as additional adversarial training data. The second iteration re-runs the training pipeline with the augmented dataset. If two iterations do not converge to acceptable performance, the methodology should be re-evaluated rather than continuing to iterate — likely causes would be insufficient voice diversity, an inadequate adversarial phrase set, or a fundamental deployment-environment mismatch.
 
 ---
 
@@ -90,12 +124,12 @@ slug only when isolating multiple nodes).
 python tools/launch-spot-instance.py \
     --ami <ami-id-from-cloud-resources.md> \
     --instance-type g4dn.xlarge \
-    --volume-gb 80 \
+    --volume-gb 128 \
     --tag cloud-task-sara \
     --instance-initiated-shutdown-behavior stop
 ```
 
-Align with Target State: **stop** (not terminate) on guest OS shutdown (`--instance-initiated-shutdown-behavior stop`, tool default); **do not** pass **`--persist-root-volume`** (unless you document an exception in **`cloud-resources.md`**) so the root volume **deletes on instance termination**. **Disk headroom is fixed at launch:** choose **`--volume-gb`** so the root filesystem still has enough *free* space after the DL AMI baseline (see [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) storage notes) for the large ACAV negative-features `.npy` (~17 GB), the venv, and training artifacts — the example below uses **`80`**. Use **`--market-type on-demand`** to avoid spot reclaim mid-run, or **`--market-type spot`** for cost with appropriate **`--spot-interruption-behavior`**.
+Align with Target State: **stop** (not terminate) on guest OS shutdown (`--instance-initiated-shutdown-behavior stop`, tool default); **do not** pass **`--persist-root-volume`** (unless you document an exception in **`cloud-resources.md`**) so the root volume **deletes on instance termination**. **Disk headroom is fixed at launch:** choose **`--volume-gb`** at least **the AMI root snapshot size** (AWS rejects smaller values with `InvalidBlockDeviceMapping`; e.g. the current **`baked-core-gpu`** row in **`cloud-resources.md`** required **≥125** GiB in one bake). Then size up further so the root filesystem still has enough *free* space after the DL AMI baseline (see [base-gpu-node](../aws-deep-learning-base/base-gpu-node.profile.md) storage notes) for the large ACAV negative-features `.npy` (~17 GB), the venv, and training artifacts — **`80`** is a reasonable target only when the snapshot minimum allows it. Use **`--market-type on-demand`** to avoid spot reclaim mid-run, or **`--market-type spot`** for cost with appropriate **`--spot-interruption-behavior`**.
 
 See **`python tools/launch-spot-instance.py --help`** for all flags (`--spot-interruption-behavior`,
 `--ssh-host-alias`, `--no-ssh-config`, etc.).
@@ -215,33 +249,54 @@ for renames. This has happened before (the original filename
 
 ### 7. Prepare background audio and RIRs
 
-```bash
-# Minimal background placeholder (sufficient for first pass)
-mkdir -p background_clips
-[ -f background_clips/silence.wav ] || \
-    ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 60 -c:a pcm_s16le background_clips/silence.wav -y 2>/dev/null
+**RIRs (mandatory):** Download the MIT Room Impulse Responses from HuggingFace.
+The dataset `davidscripka/MIT_environmental_impulse_responses` contains 271
+WAV files at 16 kHz (~8 MB total).
 
-# MIT RIRs — skip on first pass if download is not automated
+```bash
 mkdir -p mit_rirs
+python -c "
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id='davidscripka/MIT_environmental_impulse_responses',
+    repo_type='dataset',
+    local_dir='mit_rirs',
+)
+"
 ```
 
-For production-quality training, source proper background audio and the
-MIT RIR dataset. The training pipeline degrades gracefully without RIRs
-(skips reverb augmentation) and with minimal background audio.
+**Background clips (recommended upgrade):** Replace the silence placeholder
+with representative ambient audio from the deployment environment. Even a
+few minutes of kitchen ambience, TV audio, or household noise materially
+improves augmentation realism. If real ambient audio is not available, a
+silence placeholder still permits training but noise augmentation is
+effectively a no-op.
+
+```bash
+mkdir -p background_clips
+# Preferred: rsync real ambient recordings into background_clips/
+# Fallback: generate a silence placeholder (noise augmentation will be ineffective)
+[ "$(find background_clips -maxdepth 1 -type f 2>/dev/null | wc -l)" -ge 1 ] || \
+    ffmpeg -f lavfi -i anullsrc=r=16000:cl=mono -t 60 -c:a pcm_s16le background_clips/silence.wav -y 2>/dev/null
+```
 
 ### 8. Generate WAVs with Cartesia (workstation) and rsync to the instance
 
 On a machine with **Cartesia** credentials (see `generate_samples.py` / forked_assistant
 `tts` module and `.env`), from a checkout that includes **`profiling/sara-wakeword/`**:
 
+Generation must use **≥ 5 distinct Cartesia voices** with varied prosody
+(speed ± 20%, pitch ± 10–20%, emphasis, leading/trailing silence). See
+Target State **Synthetic clips** for the full diversity requirement.
+
 ```bash
-# Positives — counts should match hey_sara_model.yml n_samples / n_samples_val intent
-python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 3000 \
+# Positives — counts must meet hey_sara_model.yml: n_samples=10000, n_samples_val=2000
+python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 10000 \
   -o /tmp/oww_pos_train
-python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 500 \
+python profiling/sara-wakeword/generate_samples.py --backend cartesia --count 2000 \
   -o /tmp/oww_pos_test
 
-# Adversarial negatives (copy adversarial_phrases.example.txt or build from YAML)
+# Adversarial negatives — expanded phrase list (~20 phrases)
 python profiling/sara-wakeword/generate_samples.py --backend cartesia \
   --phrases-file profiling/sara-wakeword/adversarial_phrases.example.txt --count 500 \
   -o /tmp/oww_neg_train
@@ -250,7 +305,7 @@ python profiling/sara-wakeword/generate_samples.py --backend cartesia \
   -o /tmp/oww_neg_test
 ```
 
-Adjust **`--count`** so that after **`--phrases-file`** multiplication (samples **per phrase** × number of lines) you reach at least **`n_samples`** for train dirs and **`n_samples_val`** for test dirs (see Target State). The examples above are **illustrative** — scale **per phrase** until each of **`positive_train`**, **`negative_train`** has ≥ **`n_samples`** WAVs and each of **`positive_test`**, **`negative_test`** has ≥ **`n_samples_val`**.
+Adjust **`--count`** so that after **`--phrases-file`** multiplication (samples **per phrase** × number of lines) you reach at least **`n_samples`** for train dirs and **`n_samples_val`** for test dirs (see Target State). The examples above are **illustrative** — scale **per phrase** until each of **`positive_train`**, **`negative_train`** has ≥ **`n_samples`** (10,000) WAVs and each of **`positive_test`**, **`negative_test`** has ≥ **`n_samples_val`** (2,000).
 
 On the **instance**, create OWW’s expected layout and sync:
 
@@ -306,6 +361,53 @@ cp hey_sara_output/hey_sara.onnx .
 ```
 
 Transfer the ONNX file back to the controlling machine via rsync/SFTP.
+
+### 12. Train custom verifier (deployment target)
+
+**Runs on the deployment target** (Pi or equivalent), not the training
+instance. Requires the base ONNX model from §11 and a small number of
+real recordings from the deployment user.
+
+Record **≥ 3 WAV clips** of Tim saying "hey Sara" in deployment-like
+conditions, plus **~10 seconds** of Tim's non-wakeword speech. Then:
+
+```python
+import openwakeword
+
+openwakeword.train_custom_verifier(
+    positive_reference_clips=["tim_hey_sara_1.wav", "tim_hey_sara_2.wav", "tim_hey_sara_3.wav"],
+    negative_reference_clips=["tim_speech_1.wav", "tim_speech_2.wav"],
+    output_path="./hey_sara_verifier.pkl",
+    model_name="hey_sara.onnx",
+)
+```
+
+The exact API may differ across OWW versions — verify against the installed
+version's `docs/custom_verifier_models.md` or source. The executing agent
+should confirm the function signature before running.
+
+### 13. Validation protocol (deployment target)
+
+**Runs on the deployment target** after the base model and verifier are
+deployed. This step determines the production threshold.
+
+1. Load the model with verifier:
+   ```python
+   oww = openwakeword.Model(
+       wakeword_model_paths=["hey_sara.onnx"],
+       custom_verifier_models={"hey_sara": "hey_sara_verifier.pkl"},
+       custom_verifier_threshold=0.3,
+   )
+   ```
+2. Run a **15–30 minute** ambient session with controlled "hey Sara"
+   utterances at varied distances and volumes.
+3. Log all scores; produce a FAR vs. threshold curve.
+4. Select threshold targeting ≤ 0.5 FP/hour with FRR < 5%.
+5. Record chosen threshold as deployment metadata (env var or config).
+
+The smoke test ([`smoke_test_model.py`](smoke_test_model.py)) is a
+necessary-but-not-sufficient pre-check; this protocol supersedes it for
+threshold selection.
 
 ### Known non-blocking noise
 
@@ -367,7 +469,7 @@ come from that requirements file.
 Check **4** uses the **catalog** on the workstation and a path test **on the
 instance** (SSH session). Checks **5–15** assume a shell **cd**’d to **WORKDIR** on
 the instance, using **`venv/bin/python`** where noted (or activate **`venv/`**
-first).
+first). Checks **16–18** run on the **deployment target** (Pi or equivalent).
 
 Do **not** rely on a bare `import openwakeword` as the only check — with a
 sibling `./openwakeword` repo directory, it can resolve to a **namespace** that
@@ -376,9 +478,9 @@ imports from **`openwakeword.model`** (see Target State, Python environment).
 
 There is **one check per Target State item**, in the same order as the bold
 items under Target State (from **Instance, SSH, auth, and cataloged WORKDIR**
-through **Post-training output**). Each heading below names the item it verifies.
-If you use a slug other than **`sara`**, substitute **`cloud-task-<slug>`** in
-workstation commands.
+through **Iteration methodology**). Each heading below names the item it
+verifies. If you use a slug other than **`sara`**, substitute
+**`cloud-task-<slug>`** in workstation commands.
 
 **Optional sanity (not a Target State item):** before huge HuggingFace downloads,
 run **`df -h .`** from **WORKDIR**. Low free space is usually a **launch-time**
@@ -480,13 +582,13 @@ Expected: `PASS: WORKDIR layout and isolation OK`
 ### 6. Positive and adversarial-negative WAVs are pre-placed (Cartesia happy path)
 
 **On the instance** from **WORKDIR**. Minimum WAV counts follow **`hey_sara_model.yml`**
-(`n_samples` = 3000 train, `n_samples_val` = 500 test per polarity); adjust the
+(`n_samples` = 10000 train, `n_samples_val` = 2000 test per polarity); adjust the
 thresholds below if you change the YAML.
 
 ```bash
 BASE=hey_sara_output/hey_sara
-MIN_TR=3000
-MIN_TE=500
+MIN_TR=10000
+MIN_TE=2000
 n_pt=$(find "$BASE/positive_train" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
 n_nt=$(find "$BASE/negative_train" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
 n_pe=$(find "$BASE/positive_test" -maxdepth 1 -name '*.wav' 2>/dev/null | wc -l)
@@ -552,14 +654,17 @@ Expected: `PASS: openwakeword repo present`
 ### 13. Training data files are present
 
 ```bash
+n_rirs=$(find mit_rirs -maxdepth 2 -name '*.wav' 2>/dev/null | wc -l)
 [ -f validation_set_features.npy ] \
     && [ -f openwakeword_features_ACAV100M_2000_hrs_16bit.npy ] \
     && [ -d background_clips ] \
     && [ "$(find background_clips -maxdepth 1 -type f 2>/dev/null | wc -l)" -ge 1 ] \
-    && echo "PASS: training data present" \
-    || echo "FAIL: training data missing (npys, background_clips/, or empty background_clips)"
+    && [ "$n_rirs" -ge 1 ] \
+    && echo "PASS: training data present (rirs=$n_rirs)" \
+    || echo "FAIL: training data missing (npys, background_clips/, or mit_rirs/ empty)"
 ```
-Expected: `PASS: training data present`
+Expected: `PASS: training data present (rirs=271)` (or similar count).
+RIRs are mandatory — see Target State **Training data**.
 
 ### 14. `hey_sara_model.yml` is present in the working directory
 
@@ -580,3 +685,44 @@ print(f'PASS: model loaded, keys={list(m.models.keys())}')
 "
 ```
 Expected: `PASS: model loaded, keys=['hey_sara']`
+
+### 16. Custom verifier model exists
+
+**Deployment target** (Pi or equivalent). Verifier `.pkl` file is co-located
+with the base ONNX model and loadable by OWW.
+
+```bash
+python -c "
+import openwakeword
+m = openwakeword.Model(
+    wakeword_model_paths=['hey_sara.onnx'],
+    custom_verifier_models={'hey_sara': 'hey_sara_verifier.pkl'},
+    custom_verifier_threshold=0.3,
+)
+print(f'PASS: model + verifier loaded, keys={list(m.models.keys())}')
+"
+```
+Expected: `PASS: model + verifier loaded, keys=['hey_sara']`
+
+The exact `Model()` parameters may differ across OWW versions. The
+executing agent should verify the API against the installed version if
+this check fails on a signature mismatch rather than a missing file.
+
+### 17. Smoke test passes on the deployment target
+
+**Deployment target:**
+
+```bash
+python smoke_test_model.py hey_sara.onnx
+```
+Expected: `Smoke test passed.`
+
+### 18. Threshold-determination protocol and iteration methodology
+
+**Stub — human-verified.** The operator confirms:
+
+1. A threshold-determination session (15–30 min ambient + controlled
+   utterances) has been run on the deployment target.
+2. The chosen threshold is recorded as deployment metadata.
+3. If this is iteration 2, false-positive audio from iteration 1 was
+   incorporated as additional adversarial training data before retraining.

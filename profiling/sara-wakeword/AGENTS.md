@@ -40,6 +40,15 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 | [smoke_test_model.py](smoke_test_model.py) | Validation: load ONNX, silent-frame check, optional live mic test |
 | [generate_samples.py](generate_samples.py) | Cartesia-first TTS WAV generator (ElevenLabs/Deepgram optional); use with oww-training-env profile |
 
+### Upgrade Story (2026-04-08)
+
+Provenance from the methodology refinement session that upgraded the training
+spec to service-ready quality:
+
+| Location | Role |
+|----------|------|
+| [upgrade_story/AGENTS.md](upgrade_story/AGENTS.md) | Index: mutation table, provenance, Grok dialog, reviews, Target State draft |
+
 ### Deprecated (Hudson's Bay)
 
 Historical automation and session logs — **not** the ongoing workflow:
