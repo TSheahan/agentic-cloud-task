@@ -98,7 +98,10 @@ section. Any item that required an improvised check (marked in_progress
 during step 3) is a missing audit check. Add it to the profile.
 
 **Stale or wrong instructions** — Did any Apply step need adaptation at
-runtime? Update the profile to match what actually worked.
+runtime? Update the profile to match what actually worked. If a step was
+speculative and the correct version depends on context that varies across
+systems or runs, consider replacing it with a stub and rationale rather
+than hardcoding what happened to work this time.
 
 **New constraints** — Did the execution reveal facts not captured in Target
 State? Fold them in.

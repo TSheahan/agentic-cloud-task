@@ -111,7 +111,10 @@ _To be filled in during first execution against the target system._
 
 Do not invent Apply steps or Audit checks that haven't been validated
 against the real system. Unverified instructions are worse than a stub —
-they create false confidence.
+they create false confidence. This applies to refinement as well as
+creation: when the right answer depends on runtime context, an explicit
+indeterminacy annotation is a better refinement than a speculative
+derivation.
 
 ### 6. File and route
 

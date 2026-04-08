@@ -135,7 +135,10 @@ Guidelines:
 - Audit commands must be safe to re-run (read-only, no side effects).
 - Include the expected output literally so automated comparison is possible.
 - Cover every item in Target State — the 1:1 item-to-audit mapping defined
-  above applies here. A missing audit check for an item is a profile gap.
+  above applies here. A missing audit check for an item is a profile gap —
+  unless it is an explicit deferral with rationale (e.g. "check depends on
+  runtime state the authoring agent cannot observe"). Intentional deferral
+  is not a gap; it is a signal to the executing agent.
 - When a check requires non-trivial logic that recurs across profiles
   (e.g. "confirm a running EC2 instance tagged X exists"), implement it as
   a shared tool in `tools/` with a `--check` or read-only mode, and invoke
@@ -184,6 +187,15 @@ real system. The agent that actually runs the convergence is best positioned
 to capture the working steps (Apply) and the checks that confirmed success
 (Audit).
 
+**Stub over speculation:** A stub or minimal derivation is often *preferable*
+to a highly effortful one authored without runtime evidence. Speculative
+Apply steps and Audit checks carry a hidden cost — they create false
+confidence and noise that the executing agent must evaluate and possibly
+discard. When the right answer depends on context only the executing agent
+will have, say so explicitly and move on. An honest stub with rationale
+("depends on CUDA version present at runtime") gives the executor better
+signal than a guess.
+
 ## Compliance and convergence
 
 Profiles should conform to the three-section structure wherever practical.
@@ -191,6 +203,11 @@ Agents should converge toward proper structure when editing profiles.
 
 When state information is stale, incoherent, or needs review against the
 target environment, it may be included with annotation to that effect.
+Similarly, when a property or step is **indeterminate** — the correct value
+depends on runtime context the authoring agent does not have — annotate the
+indeterminacy and move on rather than guessing. Calling out what you don't
+know is more useful than filling the gap speculatively.
+
 Agents should refine such material into the three-section structure as they
 are able to validate it against the real system.
 
