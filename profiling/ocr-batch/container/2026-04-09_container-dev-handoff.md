@@ -12,7 +12,7 @@ WORKDIR (`/home/ubuntu/ocr-work`).
 
 Extend the instance to build and run a **containerized** OCR processor
 for AWS Batch. Profile:
-[dev-container.profile.md](dev-container.profile.md).
+[ocr-batch.profile.md](../ocr-batch.profile.md) (container section).
 
 Experimental source files are in this directory: `Dockerfile`,
 `requirements.txt`, `processor.py`. They need to be transferred to the

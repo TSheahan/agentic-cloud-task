@@ -19,9 +19,9 @@
 
 ### Repository (durable, committed)
 
-- [`dev-benchmark/r2-torch.py`](dev-benchmark/r2-torch.py) — round 2 benchmark driver.
-- [`ocr-batch.profile.md`](ocr-batch.profile.md) — evaluation Target State item, Apply §3d, Audit §13; Docling 2.x wiring notes.
-- [`AGENTS.md`](AGENTS.md) — tooling table row for round 2 script.
+- [`dev-benchmark/r2-torch.py`](r2-torch.py) — round 2 benchmark driver.
+- [`ocr-batch.profile.md`](../ocr-batch.profile.md) — evaluation Target State item, Apply §3d, Audit §13; Docling 2.x wiring notes.
+- [`AGENTS.md`](../AGENTS.md) — tooling table row for round 2 script.
 
 No change to `cloud-resources.md`, IAM, or launch tooling for this increment.
 

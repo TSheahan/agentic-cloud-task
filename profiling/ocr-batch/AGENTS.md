@@ -10,49 +10,52 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
   Future launches boot from the custom AMI ready to work in ~90s.
 - **Transfer pattern**: rsync in scripts + config → run OCR batch on GPU →
   rsync results out.
-- **Capacity / cost:** bulk OCR is a good fit for **spot** (interruptible, cost-sensitive); long single-shot training (e.g. wake-word) often prefers **on-demand** and a separate **Running On-Demand G and VT instances** vCPU quota — see Service Quotas in the target region.
+- **Capacity / cost:** bulk OCR is a good fit for **spot** (interruptible,
+  cost-sensitive); AMI-bake and endurance sessions use **on-demand** — see
+  Service Quotas for the target region.
 
 ## Contents
 
-### Profiles
+### Profile
 
 | File | Role |
 |------|------|
-| [ocr-batch.profile.md](ocr-batch.profile.md) | State convergence profile (Target State / Apply / Audit): **torch-first** default; ONNX/paddle and historical benchmark material live in **appendices**. |
+| [ocr-batch.profile.md](ocr-batch.profile.md) | Unified convergence profile: instance infra, native paddle AMI stack, thin container for Batch. Torch path in appendix (historical). |
 
-### Container development (`dev-container/`)
-
-| Location | Role |
-|----------|------|
-| [dev-container/](dev-container/AGENTS.md) | Container packaging for AWS Batch: Dockerfile, processor.py, convergence profile. |
-
-### Dev benchmarks (`sample_scan/` timing drivers)
+### Container artifacts (`container/`)
 
 | Location | Role |
 |----------|------|
-| [dev-benchmark/](dev-benchmark/AGENTS.md) | `r1-onnx.py` … `r7-paddle-tuned.py` — short names; canonical baseline **`r2-torch.py`**. |
+| [container/](container/AGENTS.md) | Dockerfile, processor.py, requirements.txt — build context for the thin container image. |
+
+### Dev benchmarks
+
+| Location | Role |
+|----------|------|
+| [dev-benchmark/](dev-benchmark/AGENTS.md) | `r1-onnx.py` … `r7-paddle-tuned.py` — timing drivers; historical baseline `r2-torch.py`. |
 
 ### Utilities
 
 | File | Role |
 |------|------|
-| [ocr_spacing_fix.py](ocr_spacing_fix.py) | Post-export spacing hook for spacing rounds (`apply_spacing_fix`, `SPACING_FIX_REVISION`). |
-| [ocr-spacing-assess.py](ocr-spacing-assess.py) | Heuristic spacing comparison across run dirs; `--discover` scans `$OCR_WORKDIR/runs`. |
+| [poke-smoke-test.py](container/poke-smoke-test.py) | Single-image Docling + RapidOCR paddle CUDA smoke test; PASS/FAIL with timing. Used by [Audit §5](ocr-batch.profile.md). |
+| [ocr_spacing_fix.py](dev-benchmark/ocr_spacing_fix.py) | Post-export spacing hook for spacing rounds (`apply_spacing_fix`, `SPACING_FIX_REVISION`). |
+| [ocr-spacing-assess.py](dev-benchmark/ocr-spacing-assess.py) | Heuristic spacing comparison across run dirs; `--discover` scans `$OCR_WORKDIR/runs`. |
 
 ### Session history
 
 | File | Role |
 |------|------|
-| [2026-04-08_build-session-1.md](2026-04-08_build-session-1.md) | Build + on-device continuation: stack installed; Docling 2.x PDF smoke test passed; profile back-filled (imports, `PdfFormatOption`, Audit §11). |
-| [2026-04-08_ocr-batch-commit-report.md](2026-04-08_ocr-batch-commit-report.md) | **Commit snapshot:** torch default decision, headline timings, spacing heuristic summary, software pins; instance `WORKDIR` not retained past shutdown. |
+| [2026-04-08_build-session-1.md](dev-benchmark/2026-04-08_build-session-1.md) | Build + on-device continuation: stack installed; Docling 2.x PDF smoke test passed; profile back-filled. |
+| [2026-04-08_ocr-batch-commit-report.md](dev-benchmark/2026-04-08_ocr-batch-commit-report.md) | Commit snapshot: torch default decision, headline timings, spacing heuristic summary, software pins. |
 
 ### Increment closeouts
 
 | File | Role |
 |------|------|
-| [2026-04-08_round-2-torch-closeout.md](2026-04-08_round-2-torch-closeout.md) | Round 2 closed: torch benchmark task, repo vs instance state delta, interpretation pointer. |
-| [2026-04-08_round-3-paddle-closeout.md](2026-04-08_round-3-paddle-closeout.md) | Round 3 closed: Paddle + `rapidocr-paddle`, benchmark capture, install note for wheel version. |
-| [2026-04-08_spacing-assess-latest-lot.md](2026-04-08_spacing-assess-latest-lot.md) | Spacing heuristic matrix for rounds 1–7 + latest-lot (4–7) notes; produced with `ocr-spacing-assess.py`. |
+| [2026-04-08_round-2-torch-closeout.md](dev-benchmark/2026-04-08_round-2-torch-closeout.md) | Round 2 closed: torch benchmark task, repo vs instance state delta. |
+| [2026-04-08_round-3-paddle-closeout.md](dev-benchmark/2026-04-08_round-3-paddle-closeout.md) | Round 3 closed: Paddle + `rapidocr-paddle`, benchmark capture, install note. |
+| [2026-04-08_spacing-assess-latest-lot.md](dev-benchmark/2026-04-08_spacing-assess-latest-lot.md) | Spacing heuristic matrix for rounds 1–7. |
 
 ## User Design Brief
 

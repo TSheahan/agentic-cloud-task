@@ -19,9 +19,9 @@
 
 ### Repository
 
-- [`dev-benchmark/r3-paddle.py`](dev-benchmark/r3-paddle.py) (already present; exercised end-to-end).
-- [`ocr-batch.profile.md`](ocr-batch.profile.md) — round-3 Target State, Apply §3e, Audit §14.
-- [`AGENTS.md`](AGENTS.md) — tooling row finalized.
+- [`dev-benchmark/r3-paddle.py`](r3-paddle.py) (already present; exercised end-to-end).
+- [`ocr-batch.profile.md`](../ocr-batch.profile.md) — round-3 Target State, Apply §3e, Audit §14.
+- [`AGENTS.md`](../AGENTS.md) — tooling row finalized.
 
 ### Instance
 

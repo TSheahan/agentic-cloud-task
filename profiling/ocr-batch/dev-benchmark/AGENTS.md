@@ -15,8 +15,8 @@ Parent: [profiling/ocr-batch/AGENTS.md](../AGENTS.md).
 | [r5-torch-spacing.py](r5-torch-spacing.py) | Round 5: torch, GPU-only, spacing params. |
 | [r6-paddle-spacing.py](r6-paddle-spacing.py) | Round 6: paddle, GPU-only, spacing params. |
 | [r7-paddle-tuned.py](r7-paddle-tuned.py) | Round 7: paddle tuned (`text_score`, `Det.score_mode`, …). |
-
-Rounds 4–7 import [`ocr_spacing_fix.py`](../ocr_spacing_fix.py) from the parent `ocr-batch/` directory.
+| [ocr_spacing_fix.py](ocr_spacing_fix.py) | Post-export spacing hook imported by rounds 4–7. |
+| [ocr-spacing-assess.py](ocr-spacing-assess.py) | Heuristic spacing comparison across run dirs; `--discover` scans `$OCR_WORKDIR/runs`. |
 
 ## Run (instance)
 
@@ -26,4 +26,4 @@ source "$OCR_WORKDIR/venv/bin/activate"
 python /path/to/repo/profiling/ocr-batch/dev-benchmark/r2-torch.py "$OCR_WORKDIR/runs/<run-id>"
 ```
 
-Copy `r*.py` plus `../ocr_spacing_fix.py` into a run directory if running without a repo checkout.
+Copy `r*.py` plus `ocr_spacing_fix.py` into a run directory if running without a repo checkout.

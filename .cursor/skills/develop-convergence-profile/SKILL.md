@@ -53,7 +53,7 @@ asks the agent to choose defaults).
 ## Preferred skeleton (consistency)
 
 Derive the file from this layout — it matches existing profiles (e.g.
-`headless-auth`, `ocr-batch`, `dev-container`): title, context paragraphs,
+`headless-auth`, `ocr-batch`, `container`): title, context paragraphs,
 pattern link, horizontal rules between major sections, optional **H3 groupers**
 inside Target State only.
 

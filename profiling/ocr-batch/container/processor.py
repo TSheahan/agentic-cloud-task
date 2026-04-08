@@ -4,7 +4,7 @@ Production output contract (three artifacts): **Markdown**, **JSON** (from the
 Docling document), and a **copy of the original input** (PDF or image). Upstream
 match input may be discarded once these three exist under the output prefix.
 
-**PaddlePaddle GPU** must be supplied by the **AMI / host** (see dev-container
+**PaddlePaddle GPU** must be supplied by the **AMI / host** (see ocr-batch
 profile); this file does not install paddle wheels.
 
 S3 mode: download object → convert → upload `.md`, `.json`, and original
