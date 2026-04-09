@@ -1,4 +1,5 @@
-# Glue packages only; large native ML wheels are installed on the AMI, not listed here.
+# Glue packages; Torch etc. often arrive transitively via docling.
+# paddlepaddle-gpu is installed in the Dockerfile after this file (fat image); host poke / thin+bind may use AMI-bound Paddle instead.
 docling>=2.0.0
 rapidocr-paddle
 boto3

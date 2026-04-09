@@ -4,8 +4,10 @@ Production output contract (three artifacts): **Markdown**, **JSON** (from the
 Docling document), and a **copy of the original input** (PDF or image). Upstream
 match input may be discarded once these three exist under the output prefix.
 
-**PaddlePaddle GPU** must be supplied by the **AMI / host** (see ocr-batch
-profile); this file does not install paddle wheels.
+**PaddlePaddle GPU** for **RapidOCR `backend="paddle"`** must be present in
+the environment: **fat image** — installed in the container image (see
+Dockerfile); **thin + bind** — from the host via `PYTHONPATH` (see ocr-batch
+profile). This file does not embed install commands beyond normal imports.
 
 S3 mode: download object → convert → upload `.md`, `.json`, and original
 basename (same as input key).
@@ -34,6 +36,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Point docling to baked model dir so layout/table models load from disk without
+# network calls. Set before docling imports so settings.artifacts_path picks it up.
+# Not declared as ENV in Dockerfile — setting it there causes docling 2.85+ to
+# KeyError on _default_models["paddle"] inside the rapidocr model resolver.
+os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/app/docling-models")
+
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
@@ -50,13 +58,25 @@ def parse_s3_uri(uri: str) -> tuple[str, str]:
     return path.split("/", 1)
 
 
+_RAPIDOCR_MODELS = Path(
+    "/usr/local/lib/python3.10/dist-packages/rapidocr/models"
+)
+
 def build_converter() -> DocumentConverter:
+    # Docling 2.85+ removed "paddle" from RapidOcrModel._default_models, so passing
+    # det/cls/rec paths explicitly avoids a KeyError when artifacts_path is set.
+    # Paths were pre-downloaded by bake-models.py at image build time.
     pipeline_options = PdfPipelineOptions(
         do_ocr=True,
         do_table_structure=True,
         ocr_options=RapidOcrOptions(
             backend="paddle",
             force_full_page_ocr=True,
+            det_model_path=str(_RAPIDOCR_MODELS / "ch_PP-OCRv4_det_mobile"),
+            cls_model_path=str(_RAPIDOCR_MODELS / "ch_ppocr_mobile_v2_0_cls_mobile"),
+            rec_model_path=str(_RAPIDOCR_MODELS / "ch_PP-OCRv4_rec_mobile"),
+            rec_keys_path=str(_RAPIDOCR_MODELS / "ppocr_keys_v1.txt"),
+            font_path=str(_RAPIDOCR_MODELS / "ppocr_keys_v1.txt"),
         ),
         ocr_batch_size=16,
         accelerator_options=AcceleratorOptions(

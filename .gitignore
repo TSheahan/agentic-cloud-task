@@ -1,4 +1,7 @@
 /scratch/
+
+# OCR container local smoke outputs (run-local-smoke.sh)
+profiling/ocr-batch/smoke-out/
 /.keys/
 /cloud-resources.md
 

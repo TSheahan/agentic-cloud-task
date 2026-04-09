@@ -70,17 +70,25 @@ Converge this track when the goal is **interactive OCR on the instance** (script
 
 Converge this track when the goal is a **docker image** for **Batch** (or repeatable `docker run` on g4). **Fat image (default intent):** `docker build` installs dependencies **inside** the image (`requirements.txt` → `pip`); the **host AMI stays generic** — no application-specific native stack required on Batch workers beyond Docker + NVIDIA runtime.
 
-- **`Dockerfile` uses a CUDA-capable base and installs from `requirements.txt`.** Typical pattern: `FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04`; system deps + `pip install -r requirements.txt` — **no** need to list every transitive in the Dockerfile if `pip` resolves them (Torch may arrive via **docling**).
+- **`Dockerfile` uses a CUDA + cuDNN8 runtime base and installs from `requirements.txt` plus Paddle for the fat path.** **Paddle’s** published `paddlepaddle-gpu` wheels probe **`/usr/local/cuda/lib64/`** for **unversioned** names such as **`libcudnn.so`** and **`libcublas.so`**, while NVIDIA runtime images ship those libraries under **`/usr/lib/…`** or with **only versioned** SONAMEs (`libcublas.so.12`, etc.). The Dockerfile should **symlink** the expected names into `/usr/local/cuda/lib64/` (and use a **cuDNN 8** base — e.g. `nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04` — not cuDNN 9–only stacks for this wheel). Then: system deps + `pip install -r requirements.txt` + **`paddlepaddle-gpu`** from the official wheel index. Torch and much of Docling’s stack may still arrive **transitively** via `pip`; **Paddle is not** reliably transitive from docling alone — the fat image must install it explicitly.
 
-- **`requirements.txt` lists direct glue pins** (`docling`, `rapidocr-paddle`, `boto3`, `pydantic`, …). It must **not** pin forbidden **direct** lines for stacks you are avoiding by design (e.g. duplicate `paddlepaddle-gpu` if Paddle is host-bound in a **thin** variant — see Alternate). **Transitive** installs (Torch, etc.) are expected for Docling when using a fat image.
+- **`requirements.txt` lists direct glue pins** (`docling`, `rapidocr-paddle`, `boto3`, `pydantic`, …). **`paddlepaddle-gpu` may live in the Dockerfile** (after `requirements.txt`) for the **fat** image rather than in `requirements.txt`, to keep one wheel-index line in the Dockerfile. For a **thin** variant, avoid duplicate Paddle in the image and use host bind (Alternate). **Transitive** installs (Torch, etc.) are expected for Docling when using a fat image.
 
-- **`processor.py` implements Docling 2.x with RapidOCR paddle on CUDA and the three-output contract.** **S3 mode:** argv `<input_s3_uri> <output_s3_prefix>`. **Local mode:** `OCR_LOCAL_FILE` + `OCR_LOCAL_OUTPUT_DIR`. `RapidOcrOptions(backend="paddle", force_full_page_ocr=True)`, `AcceleratorOptions(device=CUDA)`, `format_options` for PDF and image. Outputs: `export_to_markdown()`, `export_to_dict()`, plus copy of input file.
+- **`processor.py` implements Docling 2.x with RapidOCR paddle on CUDA and the three-output contract.** **S3 mode:** argv `<input_s3_uri> <output_s3_prefix>`. **Local mode:** `OCR_LOCAL_FILE` + `OCR_LOCAL_OUTPUT_DIR`. `RapidOcrOptions(backend="paddle", force_full_page_ocr=True)`, `AcceleratorOptions(device=CUDA)`, `format_options` for PDF and image. Outputs: `export_to_markdown()`, `export_to_dict()`, plus copy of input file. **Paddle OCR model paths** (`det`, `cls`, `rec`, `rec_keys`) are explicitly wired to baked paths in the image to prevent docling 2.85+'s `_default_models["paddle"]` lookup bug when `DOCLING_ARTIFACTS_PATH` is set.
+
+- **All models are baked into the image at build time** via [`bake-models.py`](container/bake-models.py). No model downloads occur on container startup, which is essential for thousands of AWS Batch cold starts. Baked artifacts: **docling layout model** (`docling-project/docling-layout-heron` via HF → `/app/docling-models/`), **docling table model** (`docling-project/docling-models@v2.3.0` via HF → `/app/docling-models/`), **rapidocr paddle models** (det/cls/rec via ModelScope → `/usr/local/lib/python3.10/dist-packages/rapidocr/models/`). `DOCLING_ARTIFACTS_PATH=/app/docling-models` is set at runtime by `processor.py` (not as Dockerfile `ENV`) to avoid a version-specific path resolution bug in the OCR model factory.
 
 - **Docker engine is available on the build/run host:** `docker --version` succeeds; **`nvidia-container-toolkit`** is installed so `docker run --gpus all` works.
 
 - **Container image builds successfully** from `~/ocr-work/container/` and is suitable for push to ECR / use in Batch. **Registry storage cost** is usually modest versus compute; image size is an operational (pull time / disk) concern, not necessarily the primary cost driver.
 
-- **Container smoke test passes** for the chosen variant: **fat** — `docker run` with `OCR_LOCAL_*` mounts, **no** host Paddle bind; **thin** — smoke uses **Apply** alternate mounts (`/opt/ocr-paddle-bind`, `PYTHONPATH=/paddle`). Three production artifacts under the output dir (test media under [`test-media/`](test-media/)).
+- **Container smoke test passes** for the chosen variant: **fat** — `docker run` with `OCR_LOCAL_*` mounts, **no** host Paddle bind; **thin** — smoke uses **Apply** alternate mounts (`/opt/ocr-paddle-bind`, `PYTHONPATH=/paddle`). Three production artifacts under the output dir (test media under [`test-media/`](test-media/)). Smoke output shows `File exists and is valid` for all model paths — no network fetches.
+
+- **IAM instance profile `ocr-ecr-push` is attached to `cloud-task-ocr` at launch.** The instance role carries `AmazonEC2ContainerRegistryPowerUser` (or equivalent write permissions: `ecr:GetAuthorizationToken`, `ecr:BatchCheckLayerAvailability`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload`, `ecr:PutImage`). `aws sts get-caller-identity` on the instance succeeds without explicit credential configuration. The launching principal has `iam:PassRole` scoped to this profile ARN. Role + instance profile + permission boundary are defined in a CloudFormation template in `cloud/`.
+
+- **ECR repository `ocr-docling-gpu` exists in the project region.** Created via `aws ecr create-repository` (idempotent; `|| true` on re-run). The repository URI is recorded in `cloud-resources.md`.
+
+- **Container image is pushed to ECR and the digest is recorded.** Tagged as `<account>.dkr.ecr.<region>.amazonaws.com/ocr-docling-gpu:latest`; pushed with `docker push`. The **image digest** (not only `:latest`) is recorded in `cloud-resources.md` for use in Batch job definitions.
 
 ---
 
@@ -208,18 +216,47 @@ cd ~/ocr-work/container
 docker build -t ocr-docling-gpu:latest .
 ```
 
-#### 8. Push to ECR (stub — fill region, account, repo from your AWS layout)
+#### 8. Create ECR repository and push image
 
-After local validation, tag and push so Batch can reference **immutable digests**:
+Prerequisites: IAM instance profile attached (Apply §8-pre below), or AWS credentials available in the environment. Run from the instance (role-based auth) or the workstation (env credentials).
+
+**8-pre. IAM + ECR setup (workstation, one-time)**
+
+Deploy the CloudFormation template from `cloud/` that creates the `ocr-ecr-push` role, instance profile, and `iam:PassRole` grant. Confirm the launching user's policy includes `iam:PassRole` on the profile ARN before the next instance launch. Update `tools/launch-spot-instance.py` to accept and pass `--iam-instance-profile`.
+
+**8a. Create repository (idempotent):**
 
 ```bash
-# Example only — replace ACCOUNT, REGION, REPO
-# aws ecr get-login-password --region REGION | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.REGION.amazonaws.com
-# docker tag ocr-docling-gpu:latest ACCOUNT.dkr.ecr.REGION.amazonaws.com/REPO:latest
-# docker push ACCOUNT.dkr.ecr.REGION.amazonaws.com/REPO:latest
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+aws ecr create-repository --repository-name ocr-docling-gpu --region "$REGION" || true
 ```
 
-Record the pushed **digest** in Batch job definitions / runbooks (not only `:latest`).
+Record the `repositoryUri` output in `cloud-resources.md`.
+
+**8b. Authenticate Docker to ECR:**
+
+```bash
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+```
+
+**8c. Tag and push:**
+
+```bash
+REPO_URI="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/ocr-docling-gpu"
+docker tag ocr-docling-gpu:latest "${REPO_URI}:latest"
+docker push "${REPO_URI}:latest"
+```
+
+**8d. Record digest:**
+
+```bash
+docker inspect --format='{{index .RepoDigests 0}}' "${REPO_URI}:latest"
+```
+
+Paste the `sha256:…` digest into `cloud-resources.md` alongside the repository URI. Use the digest (not `:latest`) in Batch job definitions.
 
 #### 9. GPU sanity in container
 
@@ -294,7 +331,7 @@ Run **Shared** checks for any convergence. Run **Host poke** checks only when
 that track is in scope. Run **Container image** checks only when building or
 validating the image. **N/A** is acceptable for skipped tracks.
 
-Workstation checks: §1–§2. Instance (on `cloud-task-ocr`): §3 onward.
+Workstation checks: §1–§2. Instance (on `cloud-task-ocr`): §3 onward. ECR/IAM checks: §14–§16 (require IAM instance profile attached).
 
 ### Shared
 
@@ -364,11 +401,11 @@ Expected: `PASS: poke imports` and `PASS: poke smoke (…)`.
 
 ```bash
 test -f profiling/ocr-batch/container/Dockerfile && echo "PASS" || echo "FAIL"
-grep -q 'FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04' profiling/ocr-batch/container/Dockerfile && echo "PASS: FROM" || echo "FAIL"
-! grep -qiE 'paddlepaddle-gpu' profiling/ocr-batch/container/Dockerfile && echo "PASS: no paddle in Dockerfile" || echo "FAIL"
+grep -q 'FROM nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04' profiling/ocr-batch/container/Dockerfile && echo "PASS: FROM (CUDA + cuDNN8 for Paddle)" || echo "FAIL"
+grep -qiE 'paddlepaddle-gpu' profiling/ocr-batch/container/Dockerfile && echo "PASS: paddle in Dockerfile (fat)" || echo "FAIL"
 ```
 
-Expected: three PASS lines. (Paddle may be transitive via `pip` in the image — the Dockerfile itself should not `pip install paddlepaddle-gpu` when using a **fat** image with docling; **thin** variant also avoids explicit Paddle in Dockerfile.)
+Expected: three PASS lines. **Fat** default: explicit `paddlepaddle-gpu` install in the Dockerfile (or equivalent single `pip` layer). **Thin** variant: Dockerfile omits Paddle — use Audit §**14** and Apply **Alternate** instead; this check would be adapted for that track.
 
 #### 8. requirements.txt lists direct glue deps
 
@@ -377,10 +414,10 @@ grep -q 'docling' profiling/ocr-batch/container/requirements.txt && echo "PASS: 
 grep -q 'rapidocr-paddle' profiling/ocr-batch/container/requirements.txt && echo "PASS: rapidocr-paddle" || echo "FAIL"
 grep -q 'boto3' profiling/ocr-batch/container/requirements.txt && echo "PASS: boto3" || echo "FAIL"
 grep -q 'pydantic' profiling/ocr-batch/container/requirements.txt && echo "PASS: pydantic" || echo "FAIL"
-grep -v '^#' profiling/ocr-batch/container/requirements.txt | grep -qE 'paddlepaddle-gpu' && echo "FAIL: explicit paddle wheel" || echo "PASS: no explicit paddle in requirements"
+grep -v '^#' profiling/ocr-batch/container/requirements.txt | grep -qE 'paddlepaddle-gpu' && echo "SKIP or FAIL: paddle also in requirements (optional; fat uses Dockerfile)" || echo "PASS: paddle not duplicated in requirements"
 ```
 
-Expected: five PASS lines. (Torch may be **transitive** — do not require absence from `requirements.txt` unless using a thin strategy that forbids it.)
+Expected: five PASS lines from the `docling` … `pydantic` greps, plus the last line. **Fat** default installs Paddle in the **Dockerfile**, not necessarily in `requirements.txt`. (Torch may be **transitive**.)
 
 #### 9. processor.py uses Docling 2.x paddle API
 
@@ -433,7 +470,46 @@ test -f ~/ocr-work/product/service-invoice.jpg && echo "PASS: original" || echo 
 
 Adjust basename to match `OCR_LOCAL_FILE`. Expected: three PASS lines.
 
-#### 14. Paddle import in container (**thin** path only)
+**Repo-local helper (same contract, paths via `/work` mount):** with test media under [`test-media/`](test-media/) and the image built (`ocr-docling-gpu:latest`):
+
+```bash
+profiling/ocr-batch/container/run-local-smoke.sh
+# optional: --input profiling/ocr-batch/test-media/water-bill.jpg --out-dir profiling/ocr-batch/smoke-out
+```
+
+Writes to `profiling/ocr-batch/smoke-out/` by default (gitignored). `--dry-run` prints the `docker run` command without executing.
+
+#### 14. IAM instance profile attached (on-instance)
+
+```bash
+aws sts get-caller-identity --query 'Arn' --output text && echo "PASS: instance has IAM identity" || echo "FAIL: no credentials"
+```
+
+Expected: ARN containing the role name (e.g. `assumed-role/ocr-ecr-push/i-…`) and `PASS` line.
+
+#### 15. ECR repository exists
+
+```bash
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+aws ecr describe-repositories --repository-names ocr-docling-gpu --region "$REGION" \
+  --query 'repositories[0].repositoryUri' --output text && echo "PASS: ECR repo exists" || echo "FAIL"
+```
+
+Expected: repository URI line and `PASS`.
+
+#### 16. Image pushed to ECR (digest recorded)
+
+```bash
+REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+aws ecr describe-images --repository-name ocr-docling-gpu --region "$REGION" \
+  --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text \
+  && echo "PASS: image in ECR" || echo "FAIL"
+```
+
+Expected: `sha256:…` digest and `PASS`. Cross-check digest against `cloud-resources.md`.
+
+#### 17. Paddle import in container (**thin** path only)
 
 When converging the **thin + bind** alternate: **`/opt/ocr-paddle-bind`** per Apply §**Alternate A**.
 
@@ -448,7 +524,7 @@ docker run --rm --gpus all \
 
 **N/A** when only the **fat** image track is converged (Paddle is inside the image).
 
-#### 15. Container smoke — three artifacts (**thin** path only)
+#### 18. Container smoke — three artifacts (**thin** path only)
 
 After Apply §**Alternate B**, same file checks as §**13**. **N/A** for fat-only.
 
