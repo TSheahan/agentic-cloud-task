@@ -1,0 +1,470 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Complete IAM setup for Agentic Cloud Task.
+  Creates:
+  - 6 managed policies (EC2-Core, ECR, Batch, S3, PassRole, EC2Instance)
+  - Orchestrator Role (the "agent" role) that attaches all orchestrator policies
+  - EC2 Instance Role (assumed by launched instances for docker push to ECR)
+  - EC2 Instance Profile
+  All resources are tagged with Project=agentic-cloud-task where applicable.
+
+Parameters:
+  OrchestratorPrincipalARN:
+    Type: String
+    Description: ARN of the IAM user/role/service that will assume the orchestrator role (e.g. arn:aws:iam::123456789012:user/YourName or your CodeBuild role ARN)
+    AllowedPattern: 'arn:aws:iam::\d{12}:user/.+'
+
+  ProjectTagValue:
+    Type: String
+    Default: agentic-cloud-task
+    Description: The tag value used everywhere for least-privilege scoping
+
+Resources:
+  # ==================== MANAGED POLICIES ====================
+
+  AgenticCloudEC2CorePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-EC2-Core
+      Description: Core EC2 permissions (original policy)
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Discover
+            Effect: Allow
+            Action: ec2:Describe*
+            Resource: '*'
+          - Sid: DiscoverTaggedResources
+            Effect: Allow
+            Action: tag:GetResources
+            Resource: '*'
+          - Sid: LaunchInstancesCreatedResources
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource:
+              - arn:aws:ec2:*:*:instance/*
+              - arn:aws:ec2:*:*:volume/*
+              - arn:aws:ec2:*:*:network-interface/*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: LaunchInstancesReferencedResources
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource:
+              - arn:aws:ec2:*::image/*
+              - arn:aws:ec2:*:*:key-pair/*
+              - arn:aws:ec2:*:*:security-group/*
+              - arn:aws:ec2:*:*:subnet/*
+          - Sid: ManageProjectInstances
+            Effect: Allow
+            Action:
+              - ec2:StopInstances
+              - ec2:StartInstances
+              - ec2:TerminateInstances
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: ModifyProjectVolumes
+            Effect: Allow
+            Action: ec2:ModifyVolume
+            Resource: arn:aws:ec2:*:*:volume/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: CreateAMIFromProjectInstances
+            Effect: Allow
+            Action: ec2:CreateImage
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: CreateAMIOutputResources
+            Effect: Allow
+            Action:
+              - ec2:CreateImage
+              - ec2:RegisterImage
+              - ec2:CreateSnapshot
+            Resource:
+              - arn:aws:ec2:*::image/*
+              - arn:aws:ec2:*::snapshot/*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: CleanupProjectAMIs
+            Effect: Allow
+            Action:
+              - ec2:DeregisterImage
+              - ec2:DeleteSnapshot
+            Resource: '*'
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: CreateProjectSecurityGroups
+            Effect: Allow
+            Action: ec2:CreateSecurityGroup
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: CreateSecurityGroupInVPC
+            Effect: Allow
+            Action: ec2:CreateSecurityGroup
+            Resource: arn:aws:ec2:*:*:vpc/*
+          - Sid: ManageProjectSecurityGroups
+            Effect: Allow
+            Action:
+              - ec2:DeleteSecurityGroup
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:AuthorizeSecurityGroupEgress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupEgress
+            Resource: arn:aws:ec2:*:*:security-group/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: AllocateProjectElasticIPs
+            Effect: Allow
+            Action: ec2:AllocateAddress
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: ManageProjectElasticIPs
+            Effect: Allow
+            Action:
+              - ec2:AssociateAddress
+              - ec2:DisassociateAddress
+              - ec2:ReleaseAddress
+            Resource: '*'
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: CreateProjectKeyPairs
+            Effect: Allow
+            Action:
+              - ec2:CreateKeyPair
+              - ec2:ImportKeyPair
+            Resource: arn:aws:ec2:*:*:key-pair/*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: DeleteProjectKeyPairs
+            Effect: Allow
+            Action: ec2:DeleteKeyPair
+            Resource: arn:aws:ec2:*:*:key-pair/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: TagProjectResources
+            Effect: Allow
+            Action: ec2:CreateTags
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: TagAtLaunch
+            Effect: Allow
+            Action: ec2:CreateTags
+            Resource: '*'
+            Condition:
+              StringEquals:
+                ec2:CreateAction:
+                  - RunInstances
+                  - CreateSecurityGroup
+                  - CreateImage
+                  - CreateSnapshot
+                  - AllocateAddress
+                  - CreateKeyPair
+                  - ImportKeyPair
+          - Sid: DebugProjectInstances
+            Effect: Allow
+            Action: ec2:GetConsoleOutput
+            Resource: arn:aws:ec2:*:*:instance/*
+            Condition:
+              StringEquals:
+                ec2:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: Observability
+            Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:FilterLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - cloudwatch:GetMetricData
+              - cloudwatch:ListMetrics
+            Resource: '*'
+          - Sid: CostGovernance
+            Effect: Allow
+            Action:
+              - ce:GetCostAndUsage
+              - ce:GetCostForecast
+              - budgets:ViewBudget
+            Resource: '*'
+          - Sid: SpotServiceRole
+            Effect: Allow
+            Action: iam:CreateServiceLinkedRole
+            Resource: arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/*
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: spot.amazonaws.com
+
+  AgenticCloudECRPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-ECR
+      Description: ECR permissions for the orchestrator
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DiscoverECR
+            Effect: Allow
+            Action:
+              - ecr:Describe*
+              - ecr:List*
+            Resource: '*'
+          - Sid: ECRAuthorizationToken
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: '*'
+          - Sid: CreateProjectECRRepositories
+            Effect: Allow
+            Action: ecr:CreateRepository
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: PushToProjectECRRepositories
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:GetDownloadUrlForLayer
+              - ecr:InitiateLayerUpload
+              - ecr:PutImage
+              - ecr:UploadLayerPart
+            Resource: arn:aws:ecr:*:*:repository/*
+            Condition:
+              StringEquals:
+                aws:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: CleanupProjectECR
+            Effect: Allow
+            Action:
+              - ecr:DeleteRepository
+              - ecr:BatchDeleteImage
+              - ecr:TagResource
+              - ecr:UntagResource
+            Resource: arn:aws:ecr:*:*:repository/*
+            Condition:
+              StringEquals:
+                aws:ResourceTag/Project: !Ref ProjectTagValue
+
+  AgenticCloudBatchPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-Batch
+      Description: Batch permissions for the orchestrator
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DiscoverBatch
+            Effect: Allow
+            Action:
+              - batch:Describe*
+              - batch:List*
+            Resource: '*'
+          - Sid: RegisterProjectJobDefinitions
+            Effect: Allow
+            Action: batch:RegisterJobDefinition
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: SubmitProjectBatchJobs
+            Effect: Allow
+            Action: batch:SubmitJob
+            Resource:
+              - arn:aws:batch:*:*:job/*
+              - arn:aws:batch:*:*:job-definition/*
+              - arn:aws:batch:*:*:job-queue/*
+          - Sid: ManageProjectBatchJobs
+            Effect: Allow
+            Action:
+              - batch:TerminateJob
+              - batch:CancelJob
+              - batch:DeregisterJobDefinition
+              - batch:TagResource
+              - batch:UntagResource
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:ResourceTag/Project: !Ref ProjectTagValue
+          - Sid: PassRolesToBatch
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: arn:aws:iam::*:role/*
+            Condition:
+              StringEquals:
+                iam:PassedToService:
+                  - ecs-tasks.amazonaws.com
+                  - batch.amazonaws.com
+
+  AgenticCloudS3Policy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-S3
+      Description: S3 permissions for the orchestrator
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DiscoverS3
+            Effect: Allow
+            Action:
+              - s3:ListAllMyBuckets
+              - s3:ListBucket
+              - s3:GetBucketLocation
+              - s3:GetBucketTagging
+            Resource: '*'
+          - Sid: S3ProjectBuckets
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:PutBucketTagging
+              - s3:DeleteBucket
+            Resource: arn:aws:s3::*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+          - Sid: S3ProjectObjects
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:HeadObject
+              - s3:PutObjectTagging
+              - s3:GetObjectTagging
+            Resource: arn:aws:s3:::*/*
+
+  AgenticCloudPassRolePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-PassRole
+      Description: Allows orchestrator to pass the EC2 instance role at launch
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PassRoleToEC2Instances
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/agentic-cloud-task-ec2-instance-role
+            Condition:
+              StringEquals:
+                iam:PassedToService: ec2.amazonaws.com
+
+  AgenticCloudEC2InstancePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-EC2Instance
+      Description: ECR push permissions for the launched EC2 instances
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ECRPUSHFromInstance
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+            Resource: '*'
+          - Sid: CreateProjectECRFromInstance
+            Effect: Allow
+            Action: ecr:CreateRepository
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: !Ref ProjectTagValue
+
+  # ==================== ROLES & INSTANCE PROFILE ====================
+
+  AgenticCloudOrchestratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-orchestrator-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref OrchestratorPrincipalARN
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref AgenticCloudEC2CorePolicy
+        - !Ref AgenticCloudECRPolicy
+        - !Ref AgenticCloudBatchPolicy
+        - !Ref AgenticCloudS3Policy
+        - !Ref AgenticCloudPassRolePolicy
+
+  AgenticCloudEC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-ec2-instance-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref AgenticCloudEC2InstancePolicy
+
+  AgenticCloudEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: agentic-cloud-task-ec2-instance-profile
+      Roles:
+        - !Ref AgenticCloudEC2InstanceRole
+
+  # ==================== GROUP BINDING FOR USER ====================
+
+  AgenticOrchestratorGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: AgenticOrchestratorGroup
+
+  AttachPolicyToGroup:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AttachAssumeOrchestratorRole
+      Groups:
+        - !Ref AgenticOrchestratorGroup
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/agentic-cloud-task-orchestrator-role
+
+  OrchestratorGroupBinding:
+    Type: AWS::IAM::UserToGroupAddition
+    Properties:
+      GroupName: !Ref AgenticOrchestratorGroup
+      Users:
+        - !Select [1, !Split ["/", !Ref OrchestratorPrincipalARN]]
+
+Outputs:
+  OrchestratorRoleARN:
+    Description: ARN of the orchestrator role (attach to your agent / CodeBuild / etc.)
+    Value: !GetAtt AgenticCloudOrchestratorRole.Arn
+  EC2InstanceRoleARN:
+    Description: ARN of the EC2 instance role (for docker push inside launched instances)
+    Value: !GetAtt AgenticCloudEC2InstanceRole.Arn
+  EC2InstanceProfileName:
+    Description: Name of the instance profile to pass in RunInstances / Spot launch
+    Value: !Ref AgenticCloudEC2InstanceProfile
