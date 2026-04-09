@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Complete IAM setup for Agentic Cloud Task.
   Creates:
-  - 6 managed policies (EC2-Core, ECR, Batch, S3, PassRole, EC2Instance)
+  - 7 managed policies (EC2-Core, ECR, Batch, S3, PassRole, CloudFormationRead, EC2Instance)
   - Orchestrator Role (the "agent" role) that attaches all orchestrator policies
   - EC2 Instance Role (assumed by launched instances for docker push to ECR)
   - EC2 Instance Profile
@@ -311,6 +311,20 @@ Resources:
                   - ecs-tasks.amazonaws.com
                   - batch.amazonaws.com
 
+  AgenticCloudCloudFormationReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: AgenticCloud-CloudFormationRead
+      Description: Read CloudFormation stack outputs (e.g. tools/provision-ocr-batch.py --stack-name)
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DescribeStacks
+            Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+            Resource: '*'
+
   AgenticCloudS3Policy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -377,6 +391,9 @@ Resources:
             Action:
               - ecr:GetAuthorizationToken
               - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:DescribeImages
               - ecr:InitiateLayerUpload
               - ecr:UploadLayerPart
               - ecr:CompleteLayerUpload
@@ -409,6 +426,7 @@ Resources:
         - !Ref AgenticCloudBatchPolicy
         - !Ref AgenticCloudS3Policy
         - !Ref AgenticCloudPassRolePolicy
+        - !Ref AgenticCloudCloudFormationReadPolicy
 
   AgenticCloudEC2InstanceRole:
     Type: AWS::IAM::Role

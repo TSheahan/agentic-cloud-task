@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Low-churn resources for AWS Batch OCR: worker security group (no ingress) and IAM
+  roles/instance profile used by tools/provision-ocr-batch.py. Compute environment,
+  queue, and job definition stay in the provisioner script. Deploy with capability
+  CAPABILITY_NAMED_IAM.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where Batch EC2 workers attach ENIs (typically private subnets).
+
+  OcrS3BucketName:
+    Type: String
+    Description: >
+      Bucket for OCR inputs and outputs (processor.py S3 mode). Job role grants
+      ListBucket on the bucket and object read/write under it.
+
+  ProjectTagValue:
+    Type: String
+    Default: agentic-cloud-task
+    Description: Tag value for Project (matches other project IAM/EC2 scoping).
+
+Resources:
+  # --- Networking: one SG for all Batch workers; no SSH or other inbound. ---
+  BatchOcrWorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: >
+        Batch OCR GPU workers — no inbound. Outbound unrestricted so workers can
+        reach ECR, S3, and AWS APIs without a bespoke egress matrix. Jobs are
+        short-lived; app data path is S3 only.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress: []
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: ECR, S3, CloudWatch Logs, and other AWS HTTPS endpoints
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-batch-ocr-worker'
+
+  # --- Batch service: manages compute on your behalf ---
+  BatchOcrServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-batch-ocr-service
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: batch.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServicePolicy
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  # --- ECS/Batch task execution: ECR pull, log driver ---
+  BatchOcrEcsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-batch-ocr-ecs-exec
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  # --- In-container credentials: S3 read/write for processor.py ---
+  BatchOcrJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-batch-ocr-job
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OcrS3DataAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ObjectRW
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource: !Sub 'arn:aws:s3:::${OcrS3BucketName}/*'
+              - Sid: ListBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::${OcrS3BucketName}'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  # --- Host instances Batch launches: ECS agent, ECR image layers ---
+  BatchOcrInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: agentic-cloud-task-batch-ocr-instance
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  BatchOcrInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: agentic-cloud-task-batch-ocr-instance
+      Roles:
+        - !Ref BatchOcrInstanceRole
+
+Outputs:
+  WorkerSecurityGroupId:
+    Description: Pass to provision-ocr-batch.py --security-group-ids or AGENTIC_BATCH_OCR_WORKER_SECURITY_GROUP_ID
+    Value: !Ref BatchOcrWorkerSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-WorkerSecurityGroupId'
+
+  BatchServiceRoleArn:
+    Description: AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN
+    Value: !GetAtt BatchOcrServiceRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BatchServiceRoleArn'
+
+  EcsExecutionRoleArn:
+    Description: AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN
+    Value: !GetAtt BatchOcrEcsExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcsExecutionRoleArn'
+
+  JobRoleArn:
+    Description: AGENTIC_BATCH_OCR_JOB_ROLE_ARN
+    Value: !GetAtt BatchOcrJobRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-JobRoleArn'
+
+  InstanceProfileArn:
+    Description: AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN
+    Value: !GetAtt BatchOcrInstanceProfile.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceProfileArn'

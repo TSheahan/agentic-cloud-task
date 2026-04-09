@@ -7,6 +7,12 @@ Checked-in config-as-code for cloud platforms. Preferred application method: scr
 | File | Purpose |
 |------|---------|
 | `iam-policy-ec2-basic.json` | IAM policy covering the full instance lifecycle: discover, launch, stop, AMI bake, teardown, networking, key pairs, tagging, debugging, spot. |
+| [`cf-cloud-permission-roles.yaml`](cf-cloud-permission-roles.yaml) | Account-level IAM: orchestrator role, EC2 instance profile (ECR push), managed policies for EC2 / ECR / Batch / S3 / PassRole. |
+| [`cf-batch-ocr.yaml`](cf-batch-ocr.yaml) | **OCR Batch — slow-moving plane:** worker security group (no ingress, open egress), Batch service role, ECS task execution role, S3-scoped job role, Batch EC2 instance profile. Does **not** create compute environment, queue, or job definition (those stay in `tools/provision-ocr-batch.py`). Deploy with `CAPABILITY_NAMED_IAM`. |
+
+### Batch vs permission stack
+
+[`cf-cloud-permission-roles.yaml`](cf-cloud-permission-roles.yaml) grants **who may call** Batch/ECR APIs (orchestrator user/role). [`cf-batch-ocr.yaml`](cf-batch-ocr.yaml) creates **roles and a security group** that Batch and the container **assume at runtime**. Both are needed for end-to-end job runs; they split along **API caller permissions** vs **workload identities + networking defaults**.
 
 ## Resource scoping
 

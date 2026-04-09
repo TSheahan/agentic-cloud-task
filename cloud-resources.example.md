@@ -52,6 +52,24 @@ profiles and tools can refer to roles without embedding IDs in git.
 | `ami-0bbbbbbbbbbbbbbbb` | ap-southeast-2 | raw DL Base | 2026-04-08 | available | `baked-core-gpu` — golden base after Apply §2–4 + purge (Apply §5) |
 | `ami-0cccccccccccccccc` | ap-southeast-2 | raw DL Base | 2026-04-07 | deregistered | example: prior bake deregistered (e.g. secrets in image) |
 
+## CloudFormation: OCR Batch plane (optional)
+
+After deploying [`cloud/cf-batch-ocr.yaml`](cloud/cf-batch-ocr.yaml), keep **stack name**, **parameters** you used (`VpcId`, `OcrS3BucketName`), and **outputs** in your private catalog so `tools/provision-ocr-batch.py` env vars stay reproducible. Values below are **fabricated**.
+
+| Stack name | Region | VpcId (param) | OcrS3BucketName (param) | Notes |
+|------------|--------|---------------|-------------------------|-------|
+| `agentic-batch-ocr` | ap-southeast-2 | `vpc-0feedface12345678` | `example-ocr-data-bucket` | deploy with `CAPABILITY_NAMED_IAM` |
+
+| Output (logical) | Example value | Maps to env var |
+|------------------|---------------|-----------------|
+| `WorkerSecurityGroupId` | `sg-0aaaabbbbccccdddd` | `AGENTIC_BATCH_OCR_WORKER_SECURITY_GROUP_ID` |
+| `BatchServiceRoleArn` | `arn:aws:iam::111122223333:role/agentic-cloud-task-batch-ocr-service` | `AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN` |
+| `EcsExecutionRoleArn` | `arn:aws:iam::111122223333:role/agentic-cloud-task-batch-ocr-ecs-exec` | `AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN` |
+| `JobRoleArn` | `arn:aws:iam::111122223333:role/agentic-cloud-task-batch-ocr-job` | `AGENTIC_BATCH_OCR_JOB_ROLE_ARN` |
+| `InstanceProfileArn` | `arn:aws:iam::111122223333:instance-profile/agentic-cloud-task-batch-ocr-instance` | `AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN` |
+
+**Worker subnets** (not in the template): record comma-separated subnet IDs in `AGENTIC_BATCH_OCR_WORKER_SUBNETS` or in a note row here.
+
 ## SSH (current)
 
 Commands below assume the `cloud-task-*` wildcard block from the

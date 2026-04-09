@@ -16,11 +16,13 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 ## Contents
 
-### Profile
+### Profiles
 
 | File | Role |
 |------|------|
-| [ocr-batch.profile.md](ocr-batch.profile.md) | Unified convergence profile: shared infra; **optional** tracks for **host poke** vs **container image** (fat default for Batch; thin+Paddle-bind alternate). Torch path in appendix (historical). |
+| [ocr-batch.profile.md](ocr-batch.profile.md) | Shared infrastructure + **host poke** track. Dependency root for the two companion profiles below. Torch path in appendix (historical). |
+| [container-image.profile.md](container-image.profile.md) | **Container image** track: Docker build, ECR push, fat (default) and thin+Paddle-bind (alternate) strategies. Layers on ocr-batch shared infra. |
+| [batch-worker-plane.profile.md](batch-worker-plane.profile.md) | **AWS Batch worker plane** track: CF stack ([`cloud/cf-batch-ocr.yaml`](../../cloud/cf-batch-ocr.yaml)), compute environment, queue, job definition via `tools/provision-ocr-batch.py`. Layers on shared infra + container image. |
 
 ### Container artifacts (`container/`)
 
@@ -38,8 +40,8 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 | File | Role |
 |------|------|
-| [container/run-local-smoke.sh](container/run-local-smoke.sh) | Container fat smoke: `docker run` + `OCR_LOCAL_*`, repo mounted at `/work`; defaults to `test-media/service-invoice.jpg` → `smoke-out/`. [Audit §13](ocr-batch.profile.md). |
-| [poke-smoke-test.py](container/poke-smoke-test.py) | Single-image Docling + RapidOCR paddle CUDA smoke test; PASS/FAIL with timing. Used by [Audit §5](ocr-batch.profile.md). |
+| [container/run-local-smoke.sh](container/run-local-smoke.sh) | Container fat smoke: `docker run` + `OCR_LOCAL_*`, repo mounted at `/work`; defaults to `test-media/service-invoice.jpg` → `smoke-out/`. [Audit §7](container-image.profile.md). |
+| [poke-smoke-test.py](container/poke-smoke-test.py) | Single-image Docling + RapidOCR paddle CUDA smoke test; PASS/FAIL with timing. Used by [Audit §6](ocr-batch.profile.md). |
 | [ocr_spacing_fix.py](dev-benchmark/ocr_spacing_fix.py) | Post-export spacing hook for spacing rounds (`apply_spacing_fix`, `SPACING_FIX_REVISION`). |
 | [ocr-spacing-assess.py](dev-benchmark/ocr-spacing-assess.py) | Heuristic spacing comparison across run dirs; `--discover` scans `$OCR_WORKDIR/runs`. |
 
@@ -47,6 +49,7 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 | File | Role |
 |------|------|
+| [2026-04-09_batch-plane-handoff.md](2026-04-09_batch-plane-handoff.md) | Time-bound handoff: Batch design choices (decided vs templated), provisioner baked-in defaults, plan to full job instantiation. |
 | [2026-04-08_build-session-1.md](dev-benchmark/2026-04-08_build-session-1.md) | Build + on-device continuation: stack installed; Docling 2.x PDF smoke test passed; profile back-filled. |
 | [2026-04-08_ocr-batch-commit-report.md](dev-benchmark/2026-04-08_ocr-batch-commit-report.md) | Commit snapshot: torch default decision, headline timings, spacing heuristic summary, software pins. |
 | [2026-04-09_container-build-retention.md](2026-04-09_container-build-retention.md) | Container image build/debug sequence log: Paddle install, cuDNN8 base, symlinks, model bake-in, `_default_models["paddle"]` workaround. |
