@@ -9,13 +9,13 @@ Time-bound snapshot of **design choices**, **what CloudFormation owns**, **baked
 | Element | Decision | Notes |
 |--------|----------|--------|
 | **Worker role** | Batch EC2 workers are **not SSH targets** | No interactive admin on job hosts; tear-down is cheap. |
-| **Ingress** | **None** on the worker security group | Matches “lock inbound down entirely” once basics exist. |
+| **Ingress** | **None** on the worker security group | Matches "lock inbound down entirely" once basics exist. |
 | **Egress** | **All traffic** to `0.0.0.0/0` (`IpProtocol: -1`) | Simplicity over curated endpoint lists; covers ECR, S3, CloudWatch Logs, STS, etc. |
 | **Application I/O** | **S3 only** at the app layer | [`processor.py`](container/processor.py) S3 mode: `<input_s3_uri>` + `<output_s3_prefix>`. |
 | **Split: CF vs script** | **Low-churn** = template; **faster iteration** = Python | CE, queue, job definition stay out of `cf-batch-ocr.yaml` so job-def churn does not imply stack updates. |
 | **Orchestrator credentials** | **Assume role** pattern matches ECR tooling | `.env` user may lack Batch/CF; `agentic-cloud-task-orchestrator-role` carries API rights. |
-| **Stack-driven deps** | **`DescribeStacks`** supplies SG + five ARNs | Optional `--stack-name` / `AGENTIC_BATCH_OCR_CF_STACK_NAME`; precedence: CLI > env > stack output. |
-| **Subnets** | **Operator-supplied** (not in Batch OCR stack) | VPC layout and routing (NAT vs endpoints) stay a conscious choice per environment. |
+| **Stack-driven deps** | **`DescribeStacks`** supplies SG + five ARNs + log group + S3 bucket | Optional `--stack-name` / `AGENTIC_BATCH_OCR_CF_STACK_NAME`; precedence: CLI > env > stack output. |
+| **Subnets** | **Auto-detect default VPC** or operator-supplied (not in Batch OCR stack) | `detect_default_vpc()` in `_env.py`; CLI/env override still wins. |
 | **S3 scope for job role** | **Single bucket** parameter on stack | `OcrS3BucketName`: ListBucket + object RW under that bucket only (no prefix-level IAM in template). |
 | **Batch API caller** | **`cloudformation:DescribeStacks`** added for orchestrator | [`cf-cloud-permission-roles.yaml`](../../cloud/cf-cloud-permission-roles.yaml) — `AgenticCloud-CloudFormationReadPolicy`; stack update required for `--stack-name` path. |
 | **ECR image** | **Fat** GPU container, digest pinned for prod | `cloud-resources.md` holds URI + digest; Batch job defs should prefer `@sha256:…`. |
@@ -37,7 +37,7 @@ These are **created once** (or rarely), exported as **Outputs**, and consumed by
 | **Parameters** | `VpcId`, `OcrS3BucketName`, `ProjectTagValue` | Bucket must exist; VPC must match subnet choice later. |
 | **Named IAM** | Fixed `RoleName` / `InstanceProfileName` under `agentic-cloud-task-batch-ocr-*` | Predictable ARNs; deploy needs `CAPABILITY_NAMED_IAM`. |
 
-**Not** in this template: subnets, compute environment, job queue, job definition, ECR repo, data buckets’ creation.
+**Not** in this template: subnets, compute environment, job queue, job definition, ECR repo, data buckets' creation.
 
 ---
 
@@ -78,7 +78,7 @@ Treat these as **implicit decisions** unless overridden via CLI.
 | `computeEnvironmentOrder` | single entry: `order: 1`, `computeEnvironment` = CE **ARN** from describe/create |
 | `tags` | `Project=agentic-cloud-task` |
 
-### 3.4 Job definition (every successful run registers a **new revision**)
+### 3.4 Job definition (idempotent — skips if config unchanged)
 
 | Field | Baked value |
 |-------|-------------|
@@ -90,18 +90,21 @@ Treat these as **implicit decisions** unless overridden via CLI.
 | `command` | `["Ref::inputS3", "Ref::outputS3"]` (appends to image `ENTRYPOINT` → `processor.py` argv) |
 | `tags` | `Project=agentic-cloud-task` |
 
-**Not set in code:** `logConfiguration`, `ulimits`, `environment`, `secrets`, `linuxParameters` (e.g. extra devices), retry strategy, timeout, job attempts.
+**Now also set:** `logConfiguration` (`awslogs` driver, project log group, stream prefix `ocr`) — wired from `--log-group` / env / stack output.
+
+**Not set in code:** `ulimits`, `environment`, `secrets`, `linuxParameters` (e.g. extra devices), retry strategy, timeout, job attempts.
 
 ### 3.5 Idempotency & failure modes
 
 - **CE**: if name exists and status is `CREATING` / `UPDATING` / `DELETING` / `VALID` → reuse ARN; `INVALID` / `DELETED` / unknown → exit with error (no in-place CE update).
 - **Queue**: exists → reuse; else create.
-- **Job definition**: always **register** (new revision); no “skip if unchanged”.
-- **Region / credentials**: `AWS_DEFAULT_REGION` and cloud keys from [ `_env.py`](../../tools/_env.py) / `.env`; optional STS `assume-role`.
+- **Job definition**: `_ensure_job_definition` — describes latest active revision, compares image / resources / command / parameters / IAM ARNs / logConfiguration; registers new revision only when config differs.
+- **Subnets**: CLI > env > `detect_default_vpc()` auto-detect from default VPC.
+- **Region / credentials**: `AWS_DEFAULT_REGION` and cloud keys from [`_env.py`](../../tools/_env.py) / `.env`; optional STS `assume-role`.
 
 ### 3.6 Environment variable names (contract)
 
-`AGENTIC_BATCH_OCR_WORKER_SUBNETS`, `AGENTIC_BATCH_OCR_WORKER_SECURITY_GROUP_ID`, `AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN`, `AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN`, `AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN`, `AGENTIC_BATCH_OCR_JOB_ROLE_ARN`, `AGENTIC_BATCH_OCR_CF_STACK_NAME`.
+`AGENTIC_BATCH_OCR_WORKER_SUBNETS`, `AGENTIC_BATCH_OCR_WORKER_SECURITY_GROUP_ID`, `AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN`, `AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN`, `AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN`, `AGENTIC_BATCH_OCR_JOB_ROLE_ARN`, `AGENTIC_BATCH_OCR_S3_BUCKET`, `AGENTIC_BATCH_OCR_LOG_GROUP`, `AGENTIC_BATCH_OCR_CF_STACK_NAME`.
 
 ---
 
@@ -109,8 +112,8 @@ Treat these as **implicit decisions** unless overridden via CLI.
 
 | Topic | Status |
 |-------|--------|
-| **Submit job** path | No checked-in `submit-ocr-batch-job.py`; need `SubmitJob` + parameter overrides + optional `jobDefinition` revision pinning. |
-| **Logging** | Execution role allows logs; job def does not set explicit `logConfiguration` / group naming convention. |
+| ~~**Submit job** path~~ | **Done** — [`tools/submit-ocr-batch-job.py`](../../tools/submit-ocr-batch-job.py): submit-and-wait, fetch `.md` on success or CloudWatch logs on failure. |
+| ~~**Logging**~~ | **Done** — job def sets `logConfiguration` (`awslogs`, project log group, prefix `ocr`). |
 | **Multi-bucket or prefix-scoped IAM** | Template is **one bucket**; cross-account or least-prefix S3 policy is future work. |
 | **Spot** | `--spot` exists; Spot fleet IAM and quota validation not scripted. |
 | **Service quotas / SLRs** | GPU vCPU limits and first-run Batch/Spot SLRs in region — manual or separate check. |
@@ -127,12 +130,12 @@ Ordered path from **current repo state** to **one successful OCR job in Batch**:
 1. **IAM permission stack** — Deploy/update [`cf-cloud-permission-roles.yaml`](../../cloud/cf-cloud-permission-roles.yaml) so orchestrator has **Batch**, **ECR**, **S3**, **PassRole**, **`DescribeStacks`**, etc.
 2. **Data plane bucket** — Create (or designate) **one** S3 bucket for OCR input/output; align with `OcrS3BucketName`.
 3. **Batch OCR static stack** — Deploy [`cf-batch-ocr.yaml`](../../cloud/cf-batch-ocr.yaml) with correct **`VpcId`** and bucket name; record Outputs in **`cloud-resources.md`**.
-4. **Network** — Choose **subnets** in that VPC with working egress (or endpoints) for **ECR + S3**; set `AGENTIC_BATCH_OCR_WORKER_SUBNETS`.
+4. **Network** — Subnets auto-detect from default VPC; override with `AGENTIC_BATCH_OCR_WORKER_SUBNETS` if needed.
 5. **ECR image** — Ensure image is built, pushed, digest in `cloud-resources.md`; use **`--image …@sha256:…`** on provisioner when registering job def.
-6. **Run provisioner** — `python tools/provision-ocr-batch.py --stack-name … --subnets … [--assume-role …] [--image …@sha256:…]`; if CE is new, **wait for VALID** and re-run if queue create raced.
-7. **Submit test job** — `aws batch submit-job` (or add a small tool) with `jobQueue`, `jobDefinition` (name + revision or default), `parameters` / `containerOverrides` for `inputS3` and `outputS3` pointing at real keys in the configured bucket.
-8. **Verify** — S3 output objects (`.md`, `.json`, original basename), CloudWatch logs if enabled, job **SUCCEEDED**; add **Audit** steps to the profile for repeatability.
-9. **Hardening (optional)** — Explicit log group/prefix in job def; job timeout; retry strategy; Spot path; `UpdateComputeEnvironment` workflow or doc; multi-bucket IAM if needed.
+6. **Run provisioner** — `python tools/provision-ocr-batch.py --stack-name … [--assume-role …] [--image …@sha256:…]`; if CE is new, **wait for VALID** and re-run if queue create raced.
+7. **Submit test job** — `python tools/submit-ocr-batch-job.py s3://bucket/inbox/doc.pdf s3://bucket/processed/doc/ [--assume-role …]`
+8. **Verify** — Tool prints `.md` on success or CloudWatch logs on failure; add **Audit** steps to the profile for repeatability.
+9. **Hardening (optional)** — Job timeout; retry strategy; Spot path; `UpdateComputeEnvironment` workflow or doc; multi-bucket IAM if needed.
 
 ---
 
@@ -140,9 +143,10 @@ Ordered path from **current repo state** to **one successful OCR job in Batch**:
 
 | Artifact | Path |
 |----------|------|
-| Profile (Target State / Apply) | [`ocr-batch.profile.md`](ocr-batch.profile.md) |
+| Profile (Target State / Apply) | [`batch-worker-plane.profile.md`](batch-worker-plane.profile.md) |
 | Batch static CFN | [`cloud/cf-batch-ocr.yaml`](../../cloud/cf-batch-ocr.yaml) |
 | Account IAM CFN | [`cloud/cf-cloud-permission-roles.yaml`](../../cloud/cf-cloud-permission-roles.yaml) |
 | Provisioner | [`tools/provision-ocr-batch.py`](../../tools/provision-ocr-batch.py) |
+| Submit tool | [`tools/submit-ocr-batch-job.py`](../../tools/submit-ocr-batch-job.py) |
 | ECR repo helper | [`tools/ensure-ecr-ocr-repo.py`](../../tools/ensure-ecr-ocr-repo.py) |
 | Catalog layout (example) | [`cloud-resources.example.md`](../../cloud-resources.example.md) |

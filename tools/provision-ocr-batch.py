@@ -9,11 +9,15 @@ Creates (idempotent where possible):
 **Slow-moving IAM + worker security group** live in CloudFormation
 [`cloud/cf-batch-ocr.yaml`](../cloud/cf-batch-ocr.yaml) (deploy with ``CAPABILITY_NAMED_IAM``).
 
-**Dependency resolution** for security group + IAM ARNs (not subnets): **CLI flags** beat **environment
+**Dependency resolution** for security group, IAM ARNs, and log group: **CLI flags** beat **environment
 variables**, which beat **stack outputs** when you pass ``--stack-name`` (or
 ``AGENTIC_BATCH_OCR_CF_STACK_NAME``). That reads ``DescribeStacks`` and maps
 ``WorkerSecurityGroupId``, ``BatchServiceRoleArn``, ``EcsExecutionRoleArn``, ``JobRoleArn``,
-``InstanceProfileArn``. You can still export those outputs as env vars instead if you prefer.
+``InstanceProfileArn``, ``OcrBatchLogGroupName``, and ``OcrS3BucketName``.
+
+**Subnets** default to the **default VPC's public subnets** when neither ``--subnets`` nor
+``AGENTIC_BATCH_OCR_WORKER_SUBNETS`` is provided (auto-detected via ``ec2:DescribeVpcs`` +
+``ec2:DescribeSubnets``).
 
 **Networking / security posture (default intent):** Batch workers are **not** SSH hosts. **No inbound**
 on the worker security group from this template; **egress is open** so the host can reach **ECR**,
@@ -24,12 +28,14 @@ endpoints so **image pull** succeeds.
 
 **Environment variables** (optional defaults for flags of the same meaning):
 
-- ``AGENTIC_BATCH_OCR_WORKER_SUBNETS`` — comma-separated subnet IDs
+- ``AGENTIC_BATCH_OCR_WORKER_SUBNETS`` — comma-separated subnet IDs (fallback: default VPC)
 - ``AGENTIC_BATCH_OCR_WORKER_SECURITY_GROUP_ID`` — single SG (from ``cf-batch-ocr`` output)
 - ``AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN``
 - ``AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN`` (Batch service role)
 - ``AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN`` (ECS task execution)
 - ``AGENTIC_BATCH_OCR_JOB_ROLE_ARN`` (S3 in-container)
+- ``AGENTIC_BATCH_OCR_LOG_GROUP`` — CloudWatch log group for ``awslogs`` driver
+- ``AGENTIC_BATCH_OCR_S3_BUCKET`` — OCR data bucket (read from stack, used by submit tool)
 
 If ``batch:*`` / ``ecr:*`` are only on the orchestrator role, pass ``--assume-role`` (same pattern as
 ``ensure-ecr-ocr-repo.py``). Using ``--stack-name`` additionally requires
@@ -62,7 +68,12 @@ import sys
 import boto3
 from botocore.exceptions import ClientError
 
-from _env import AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID_CLOUD, AWS_SECRET_ACCESS_KEY_CLOUD
+from _env import (
+    AWS_DEFAULT_REGION,
+    AWS_ACCESS_KEY_ID_CLOUD,
+    AWS_SECRET_ACCESS_KEY_CLOUD,
+    detect_default_vpc,
+)
 
 PROJECT_TAG_KEY = "Project"
 PROJECT_TAG_VALUE = "agentic-cloud-task"
@@ -74,6 +85,8 @@ ENV_INSTANCE_PROFILE = "AGENTIC_BATCH_OCR_INSTANCE_PROFILE_ARN"
 ENV_SERVICE_ROLE = "AGENTIC_BATCH_OCR_SERVICE_ROLE_ARN"
 ENV_EXECUTION_ROLE = "AGENTIC_BATCH_OCR_EXECUTION_ROLE_ARN"
 ENV_JOB_ROLE = "AGENTIC_BATCH_OCR_JOB_ROLE_ARN"
+ENV_S3_BUCKET = "AGENTIC_BATCH_OCR_S3_BUCKET"
+ENV_LOG_GROUP = "AGENTIC_BATCH_OCR_LOG_GROUP"
 ENV_CF_STACK = "AGENTIC_BATCH_OCR_CF_STACK_NAME"
 
 # Must match Output keys in cloud/cf-batch-ocr.yaml
@@ -82,6 +95,8 @@ OUT_BATCH_SERVICE = "BatchServiceRoleArn"
 OUT_ECS_EXEC = "EcsExecutionRoleArn"
 OUT_JOB = "JobRoleArn"
 OUT_INSTANCE_PROFILE = "InstanceProfileArn"
+OUT_S3_BUCKET = "OcrS3BucketName"
+OUT_LOG_GROUP = "OcrBatchLogGroupName"
 
 DEFAULT_CE_NAME = "ocr-docling-gpu-ce"
 DEFAULT_QUEUE_NAME = "ocr-docling-gpu-queue"
@@ -113,13 +128,6 @@ def _session(assume_role_arn: str | None):
 
 def _batch_tags() -> dict[str, str]:
     return {PROJECT_TAG_KEY: PROJECT_TAG_VALUE}
-
-
-def _from_cli_or_env(cli: str | None, env_key: str, flag: str) -> str:
-    v = (cli or "").strip() or os.environ.get(env_key, "").strip()
-    if not v:
-        sys.exit(f"error: pass {flag} or set environment variable {env_key}")
-    return v
 
 
 def _resolve_from_stack_or_env(
@@ -245,37 +253,85 @@ def _ensure_job_queue(batch, *, name: str, compute_env_order: list[dict]) -> str
     return arn
 
 
-def _register_job_definition(
+def _job_def_matches(existing: dict, wanted: dict) -> bool:
+    """True when the active revision's container config matches what we'd register."""
+    cp = existing.get("containerProperties", {})
+    wp = wanted["containerProperties"]
+    if cp.get("image") != wp["image"]:
+        return False
+    if cp.get("command") != wp["command"]:
+        return False
+    if cp.get("jobRoleArn") != wp["jobRoleArn"]:
+        return False
+    if cp.get("executionRoleArn") != wp["executionRoleArn"]:
+        return False
+    existing_rr = sorted(cp.get("resourceRequirements", []), key=lambda r: r["type"])
+    wanted_rr = sorted(wp["resourceRequirements"], key=lambda r: r["type"])
+    if existing_rr != wanted_rr:
+        return False
+    if cp.get("logConfiguration") != wp.get("logConfiguration"):
+        return False
+    if existing.get("parameters") != wanted.get("parameters"):
+        return False
+    return True
+
+
+def _ensure_job_definition(
     batch,
     *,
     name: str,
     image: str,
     job_role_arn: str,
     execution_role_arn: str,
+    log_group_name: str | None,
 ) -> str:
-    resp = batch.register_job_definition(
-        jobDefinitionName=name,
-        type="container",
-        platformCapabilities=["EC2"],
-        parameters={
+    container_props: dict = {
+        "image": image,
+        "resourceRequirements": [
+            {"type": "GPU", "value": "1"},
+            {"type": "VCPU", "value": "4"},
+            {"type": "MEMORY", "value": "16384"},
+        ],
+        "jobRoleArn": job_role_arn,
+        "executionRoleArn": execution_role_arn,
+        "command": ["Ref::inputS3", "Ref::outputS3"],
+    }
+    if log_group_name:
+        container_props["logConfiguration"] = {
+            "logDriver": "awslogs",
+            "options": {
+                "awslogs-group": log_group_name,
+                "awslogs-stream-prefix": "ocr",
+            },
+        }
+
+    wanted = {
+        "parameters": {
             "inputS3": "s3://your-bucket/path/to/input.pdf",
             "outputS3": "s3://your-bucket/path/to/output/prefix/",
         },
-        containerProperties={
-            "image": image,
-            "resourceRequirements": [
-                {"type": "GPU", "value": "1"},
-                {"type": "VCPU", "value": "4"},
-                {"type": "MEMORY", "value": "16384"},
-            ],
-            "jobRoleArn": job_role_arn,
-            "executionRoleArn": execution_role_arn,
-            "command": ["Ref::inputS3", "Ref::outputS3"],
-        },
+        "containerProperties": container_props,
+    }
+
+    resp = batch.describe_job_definitions(jobDefinitionName=name, status="ACTIVE")
+    defs = resp.get("jobDefinitions", [])
+    if defs:
+        latest = max(defs, key=lambda d: d["revision"])
+        if _job_def_matches(latest, wanted):
+            arn = latest["jobDefinitionArn"]
+            print("Job definition up to date:", arn, "(revision", str(latest["revision"]) + ")")
+            return arn
+        print("Job definition config differs — registering new revision")
+
+    reg = batch.register_job_definition(
+        jobDefinitionName=name,
+        type="container",
+        platformCapabilities=["EC2"],
         tags=_batch_tags(),
+        **wanted,
     )
-    rev = resp["revision"]
-    arn = resp["jobDefinitionArn"]
+    rev = reg["revision"]
+    arn = reg["jobDefinitionArn"]
     print("Registered job definition:", arn, "(revision", str(rev) + ")")
     return arn
 
@@ -306,7 +362,7 @@ def main() -> int:
     )
     p.add_argument(
         "--subnets",
-        help=f"Comma-separated subnet IDs (or {ENV_WORKER_SUBNETS})",
+        help=f"Comma-separated subnet IDs (or {ENV_WORKER_SUBNETS}; fallback: default VPC subnets)",
     )
     p.add_argument(
         "--security-group-ids",
@@ -327,6 +383,10 @@ def main() -> int:
     p.add_argument(
         "--job-role-arn",
         help=f"Job role ARN for processor.py S3 access (or {ENV_JOB_ROLE}; else {OUT_JOB})",
+    )
+    p.add_argument(
+        "--log-group",
+        help=f"CloudWatch log group for job containers (or {ENV_LOG_GROUP}; else {OUT_LOG_GROUP})",
     )
     p.add_argument(
         "--image",
@@ -371,13 +431,20 @@ def main() -> int:
     if args.desired_vcpus > args.max_vcpus or args.min_vcpus > args.max_vcpus:
         sys.exit("error: min/desired vCPUs must not exceed max_vcpus")
 
-    subnets_raw = _from_cli_or_env(args.subnets, ENV_WORKER_SUBNETS, "--subnets")
-
     session = _session(args.assume_role)
     stack_name = (args.stack_name or "").strip() or os.environ.get(ENV_CF_STACK, "").strip()
     stack_outputs = _load_cf_stack_outputs(session, stack_name) if stack_name else None
     if stack_outputs:
         print("Using CloudFormation outputs from stack:", stack_name)
+
+    # --- subnets: CLI > env > default-VPC auto-detect ---
+    subnets_raw = (args.subnets or "").strip() or os.environ.get(ENV_WORKER_SUBNETS, "").strip()
+    if subnets_raw:
+        subnets = [s.strip() for s in subnets_raw.split(",") if s.strip()]
+    else:
+        ec2 = session.client("ec2")
+        vpc_id, subnets = detect_default_vpc(ec2)
+        print(f"Auto-detected default VPC {vpc_id} with subnets: {', '.join(subnets)}")
 
     sg_raw = _resolve_from_stack_or_env(
         args.security_group_ids,
@@ -414,9 +481,23 @@ def main() -> int:
         stack_outputs=stack_outputs,
         output_key=OUT_JOB,
     )
+
+    # --- log group: CLI > env > stack output (optional — omits logConfiguration if absent) ---
+    log_group_name = (args.log_group or "").strip() or os.environ.get(ENV_LOG_GROUP, "").strip()
+    if not log_group_name and stack_outputs:
+        log_group_name = (stack_outputs.get(OUT_LOG_GROUP) or "").strip()
+    if log_group_name:
+        print("Log group for job containers:", log_group_name)
+
+    # --- S3 bucket: read from stack for catalog consistency (not wired into Batch resources) ---
+    s3_bucket = os.environ.get(ENV_S3_BUCKET, "").strip()
+    if not s3_bucket and stack_outputs:
+        s3_bucket = (stack_outputs.get(OUT_S3_BUCKET) or "").strip()
+    if s3_bucket:
+        print("OCR S3 bucket:", s3_bucket)
+
     batch = session.client("batch")
     image = args.image or _default_image(session)
-    subnets = [s.strip() for s in subnets_raw.split(",") if s.strip()]
     sgs = [s.strip() for s in sg_raw.split(",") if s.strip()]
     inst_types = [s.strip() for s in args.instance_types.split(",") if s.strip()]
 
@@ -443,12 +524,13 @@ def main() -> int:
         ],
     )
 
-    _register_job_definition(
+    _ensure_job_definition(
         batch,
         name=args.job_definition_name,
         image=image,
         job_role_arn=job_role_arn,
         execution_role_arn=execution_role_arn,
+        log_group_name=log_group_name or None,
     )
 
     print("Done. Submit jobs with jobQueue=", args.queue_name, "jobDefinition=", args.job_definition_name, sep="")
