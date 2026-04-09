@@ -34,6 +34,12 @@ Resources:
             Effect: Allow
             Action: ec2:Describe*
             Resource: '*'
+          - Sid: DiscoverIAM
+            Effect: Allow
+            Action:
+              - iam:Get*
+              - iam:List*
+            Resource: '*'
           - Sid: DiscoverTaggedResources
             Effect: Allow
             Action: tag:GetResources
@@ -275,9 +281,12 @@ Resources:
               - batch:Describe*
               - batch:List*
             Resource: '*'
-          - Sid: RegisterProjectJobDefinitions
+          - Sid: CreateProjectBatchResources
             Effect: Allow
-            Action: batch:RegisterJobDefinition
+            Action:
+              - batch:CreateComputeEnvironment
+              - batch:CreateJobQueue
+              - batch:RegisterJobDefinition
             Resource: '*'
             Condition:
               StringEquals:

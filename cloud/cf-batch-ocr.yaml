@@ -1,14 +1,14 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Low-churn resources for AWS Batch OCR: worker security group (no ingress) and IAM
-  roles/instance profile used by tools/provision-ocr-batch.py. Compute environment,
-  queue, and job definition stay in the provisioner script. Deploy with capability
-  CAPABILITY_NAMED_IAM.
+  Low-churn resources for AWS Batch OCR: S3 data bucket, CloudWatch log group
+  (7-day retention), worker security group (no ingress), and IAM roles/instance
+  profile. Compute environment, queue, and job definition stay in the provisioner
+  script (tools/provision-ocr-batch.py). Deploy with CAPABILITY_NAMED_IAM.
 
 Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: VPC where Batch EC2 workers attach ENIs (typically private subnets).
+    Description: VPC for Batch EC2 workers (default VPC public subnets are sufficient).
 
   OcrS3BucketName:
     Type: String
@@ -22,6 +22,25 @@ Parameters:
     Description: Tag value for Project (matches other project IAM/EC2 scoping).
 
 Resources:
+  # --- Data plane: single S3 bucket for OCR input/output ---
+  OcrDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref OcrS3BucketName
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  # --- Logging: project-scoped log group with retention for cost control ---
+  OcrBatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /agentic-cloud-task/ocr-batch
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
   # --- Networking: one SG for all Batch workers; no SSH or other inbound. ---
   BatchOcrWorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -168,3 +187,15 @@ Outputs:
     Value: !GetAtt BatchOcrInstanceProfile.Arn
     Export:
       Name: !Sub '${AWS::StackName}-InstanceProfileArn'
+
+  OcrS3BucketName:
+    Description: S3 bucket for OCR input/output (AGENTIC_BATCH_OCR_S3_BUCKET)
+    Value: !Ref OcrDataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-OcrS3BucketName'
+
+  OcrBatchLogGroupName:
+    Description: CloudWatch Logs group for Batch container output (AGENTIC_BATCH_OCR_LOG_GROUP)
+    Value: !Ref OcrBatchLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-OcrBatchLogGroupName'
