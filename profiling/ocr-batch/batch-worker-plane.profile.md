@@ -85,4 +85,70 @@ With **`--stack-name`** (or **`AGENTIC_BATCH_OCR_CF_STACK_NAME`**), the provisio
 
 ## Audit
 
-_To be filled in during first execution against the target system._
+Derived from first smoke-test execution (2026-04-10). Steps 1--2 verified; steps 3--5 pending.
+
+#### 1. CF stack deployed and outputs readable
+
+```bash
+# Orchestrator reads stack outputs (DescribeStacks)
+python -c "
+from tools._env import *; import boto3
+sts = boto3.client('sts', region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID_CLOUD,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD)
+c = sts.assume_role(RoleArn='arn:aws:iam::613737894147:role/agentic-cloud-task-orchestrator-role',
+    RoleSessionName='audit')['Credentials']
+cfn = boto3.client('cloudformation', region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=c['AccessKeyId'], aws_secret_access_key=c['SecretAccessKey'],
+    aws_session_token=c['SessionToken'])
+s = cfn.describe_stacks(StackName='agentic-batch-ocr')['Stacks'][0]
+assert s['StackStatus'] == 'CREATE_COMPLETE'
+for o in s['Outputs']: print(f\"{o['OutputKey']:30s} = {o['OutputValue']}\")
+"
+```
+
+#### 2. Batch resources exist and are VALID
+
+```bash
+# CE status = VALID, queue exists, job def has active revision
+python tools/provision-ocr-batch.py \
+  --stack-name agentic-batch-ocr \
+  --assume-role arn:aws:iam::ACCOUNT:role/agentic-cloud-task-orchestrator-role
+# Idempotent — prints "exists" for each if already provisioned.
+```
+
+#### 3. Submit smoke job (pending)
+
+_Run `tools/submit-ocr-batch-job.py` per brief step 4. Verify SUCCEEDED, `.md` output, 3 objects under output prefix._
+
+#### 4. Batch SLR exists
+
+Verify `AWSServiceRoleForBatch` exists in account (first-time Batch prerequisite).
+
+---
+
+## First-execution observations (2026-04-10)
+
+Recorded during smoke test. Fold forward into Target State or Apply as warranted.
+
+### Prerequisites not previously documented
+
+1. **Batch service-linked role** (`AWSServiceRoleForBatch`) must exist before `CreateComputeEnvironment`. First-time Batch accounts need it created manually or via `iam:CreateServiceLinkedRole` for `batch.amazonaws.com`.
+2. **Permission-roles stack** must grant `batch:TagResource` with `aws:RequestTag` condition for create-time tagging (tag-at-create chicken-and-egg).
+3. **`iam:PassRole` to `ec2.amazonaws.com`** is needed in the Batch policy for the instance profile role (Batch passes it to EC2 at CE creation).
+4. **`computeResources.tags`** (instance-level tags) triggers an additional IAM evaluation that the current orchestrator policy cannot satisfy. Removed from provisioner for now; CE-level tags (`tags` top-level) work. Revisit when the IAM interaction is understood.
+
+### CF template fixes applied
+
+- `AWSBatchServicePolicy` (nonexistent) changed to `AWSBatchServiceRole`.
+- SG `GroupDescription` simplified to single-line ASCII (YAML `>` folding + em-dash caused EC2 rejection).
+
+### Provisioner fixes applied
+
+- `_session()` duplicate `region_name` kwarg fixed (both provisioner and submit tool).
+- `computeEnvironmentOrder` kwarg renamed to `compute_env_order` (matched function signature).
+- `computeResources.tags` removed (IAM denial; see prerequisite 4 above).
+
+### Cleanup required
+
+- Orphan probe CE `probe-no-crtags` in Batch (created during IAM debugging; needs console delete).

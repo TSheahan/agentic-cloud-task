@@ -60,7 +60,7 @@ def _session(assume_role_arn: str | None) -> boto3.Session:
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD,
     )
     if not assume_role_arn:
-        return boto3.Session(region_name=AWS_DEFAULT_REGION, **base)
+        return boto3.Session(**base)
     sts = boto3.client("sts", **base)
     out = sts.assume_role(
         RoleArn=assume_role_arn,

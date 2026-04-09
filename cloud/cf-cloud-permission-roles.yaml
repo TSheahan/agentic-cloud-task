@@ -208,13 +208,15 @@ Resources:
               - ce:GetCostForecast
               - budgets:ViewBudget
             Resource: '*'
-          - Sid: SpotServiceRole
+          - Sid: ServiceLinkedRoles
             Effect: Allow
             Action: iam:CreateServiceLinkedRole
-            Resource: arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/*
+            Resource: arn:aws:iam::*:role/aws-service-role/*
             Condition:
               StringEquals:
-                iam:AWSServiceName: spot.amazonaws.com
+                iam:AWSServiceName:
+                  - spot.amazonaws.com
+                  - batch.amazonaws.com
 
   AgenticCloudECRPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -287,6 +289,7 @@ Resources:
               - batch:CreateComputeEnvironment
               - batch:CreateJobQueue
               - batch:RegisterJobDefinition
+              - batch:TagResource
             Resource: '*'
             Condition:
               StringEquals:
@@ -319,6 +322,7 @@ Resources:
                 iam:PassedToService:
                   - ecs-tasks.amazonaws.com
                   - batch.amazonaws.com
+                  - ec2.amazonaws.com
 
   AgenticCloudCloudFormationReadPolicy:
     Type: AWS::IAM::ManagedPolicy

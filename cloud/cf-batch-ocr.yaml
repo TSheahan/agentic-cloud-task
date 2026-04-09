@@ -45,10 +45,7 @@ Resources:
   BatchOcrWorkerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: >
-        Batch OCR GPU workers — no inbound. Outbound unrestricted so workers can
-        reach ECR, S3, and AWS APIs without a bespoke egress matrix. Jobs are
-        short-lived; app data path is S3 only.
+      GroupDescription: Batch OCR GPU workers - no inbound, egress unrestricted for ECR/S3/AWS APIs. Short-lived jobs, S3 data path only.
       VpcId: !Ref VpcId
       SecurityGroupIngress: []
       SecurityGroupEgress:
@@ -74,7 +71,7 @@ Resources:
               Service: batch.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSBatchServicePolicy
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
       Tags:
         - Key: Project
           Value: !Ref ProjectTagValue

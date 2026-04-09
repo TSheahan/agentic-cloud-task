@@ -111,7 +111,7 @@ def _session(assume_role_arn: str | None):
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD,
     )
     if not assume_role_arn:
-        return boto3.Session(region_name=AWS_DEFAULT_REGION, **base)
+        return boto3.Session(**base)
     sts = boto3.client("sts", **base)
     out = sts.assume_role(
         RoleArn=assume_role_arn,
@@ -208,7 +208,6 @@ def _ensure_compute_env(
         "subnets": subnets,
         "securityGroupIds": security_group_ids,
         "instanceRole": instance_profile_arn,
-        "tags": _batch_tags(),
     }
     if use_spot:
         if not spot_fleet_role_arn:
@@ -519,7 +518,7 @@ def main() -> int:
     _ensure_job_queue(
         batch,
         name=args.queue_name,
-        computeEnvironmentOrder=[
+        compute_env_order=[
             {"order": 1, "computeEnvironment": ce_arn},
         ],
     )
