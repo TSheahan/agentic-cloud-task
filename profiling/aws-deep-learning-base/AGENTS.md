@@ -19,3 +19,4 @@ task-specific profiles (OCR, wake-word, etc.) — they layer on top.
 | File | Role |
 |------|------|
 | [base-gpu-node.profile.md](base-gpu-node.profile.md) | State convergence profile: Target State / Apply / Audit for a provisioned GPU instance |
+| [cursor-rules/](cursor-rules/) | Staging mirror of `~/.cursor/rules/` (`.mdc` files). Cursor does not load rules from this path; copy into `~/.cursor/rules/` to activate. |

@@ -20,13 +20,13 @@ Layers on [aws-deep-learning-base](../aws-deep-learning-base/AGENTS.md).
 
 | File | Role |
 |------|------|
-| [ocr-batch.profile.md](ocr-batch.profile.md) | Unified convergence profile: instance infra, native paddle AMI stack, thin container for Batch. Torch path in appendix (historical). |
+| [ocr-batch.profile.md](ocr-batch.profile.md) | Unified convergence profile: shared infra; **optional** tracks for **host poke** vs **container image** (fat default for Batch; thin+Paddle-bind alternate). Torch path in appendix (historical). |
 
 ### Container artifacts (`container/`)
 
 | Location | Role |
 |----------|------|
-| [container/](container/AGENTS.md) | Dockerfile, processor.py, requirements.txt — build context for the thin container image. |
+| [container/](container/AGENTS.md) | Dockerfile, processor.py, requirements.txt — build context for the OCR container image (fat or thin strategy per profile). |
 
 ### Dev benchmarks
 

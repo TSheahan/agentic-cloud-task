@@ -1,0 +1,6 @@
+---
+description: Operate locally on the agentic-cloud-task target system
+alwaysApply: true
+---
+
+You are executing on the target system for agentic-cloud-task, therefore operate locally.

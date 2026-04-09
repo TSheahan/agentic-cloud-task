@@ -1,4 +1,4 @@
-# Tiny image: CUDA runtime base + minimal pip. Native Paddle stack is on the custom AMI, not in this build.
+# CUDA runtime base + pip from requirements.txt. Host poke may use native Paddle; fat image carries deps via pip.
 FROM nvidia/cuda:12.6.0-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
