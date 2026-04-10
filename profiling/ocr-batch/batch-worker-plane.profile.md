@@ -85,7 +85,7 @@ With **`--stack-name`** (or **`AGENTIC_BATCH_OCR_CF_STACK_NAME`**), the provisio
 
 ## Audit
 
-Derived from first smoke-test execution (2026-04-10). Steps 1--2 verified; steps 3--5 pending.
+Derived from smoke-test execution (2026-04-10). **End-to-end path verified:** CF stack + Batch plane + submit **SUCCEEDED** (OCR output under `processed/…` prefix). Keep **gitignored `cloud-resources.md`** aligned with stack outputs and any pinned **ECR digest** you care about.
 
 #### 1. CF stack deployed and outputs readable
 
@@ -114,9 +114,16 @@ python tools/provision-ocr-batch.py \
 # Idempotent — prints "exists" for each if already provisioned.
 ```
 
-#### 3. Submit smoke job (pending)
+#### 3. Submit smoke job (end-to-end)
 
-_Run `tools/submit-ocr-batch-job.py` per brief step 4. Verify SUCCEEDED, `.md` output, 3 objects under output prefix._
+```bash
+python tools/submit-ocr-batch-job.py \
+  s3://agentic-cloud-task-scans/inbox/service-invoice.jpg \
+  s3://agentic-cloud-task-scans/processed/service-invoice/ \
+  --assume-role arn:aws:iam::613737894147:role/agentic-cloud-task-orchestrator-role
+```
+
+**Checkpoint — SUCCEEDED:** tool prints output `.md`; three objects under the output prefix (`{stem}.md`, `{stem}.json`, original basename). First cold start can be **several minutes** (instance + image pull).
 
 #### 4. Batch SLR exists
 
@@ -145,7 +152,14 @@ Recorded during smoke test. Fold forward into Target State or Apply as warranted
 - `_session()` duplicate `region_name` kwarg fixed (both provisioner and submit tool).
 - `computeEnvironmentOrder` kwarg renamed to `compute_env_order` (matched function signature).
 - `computeResources.tags` removed (IAM denial; see prerequisite 4 above).
+- **Job definition `resourceRequirements`:** requesting **nominal** g4dn.xlarge **4 vCPU + 16384 MiB** caused **`MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`** (ECS/Batch host reserve). **Placed** values: **3 vCPU**, **15360 MiB**, **1 GPU** — provisioner registers a **new revision** when this block changes.
+
+### Processor / operator fixes (smoke 2026-04-10)
+
+- **`run_s3` + `_write_outputs`:** when `out_tmp` is the same temp dir as the downloaded input, **`shutil.copy2` source and dest are identical** → `SameFileError`. **Fix:** skip `copy2` when resolved paths match; S3 upload of the original still uses `local_in`.
+- **`tools/submit-ocr-batch-job.py`:** on Windows, printing CloudWatch log lines with non-CP1252 characters could raise **`UnicodeEncodeError`** — **reconfigure** stdout/stderr to UTF-8 with `errors="replace"` at startup.
+- **Logging:** optional env **`OCR_LOG_LEVEL`** on the processor (default **`WARNING`**) applied **before** Docling import — ship with the **next** container image to quiet RapidOCR INFO in CloudWatch.
 
 ### Cleanup required
 
-- Orphan probe CE `probe-no-crtags` in Batch (created during IAM debugging; needs console delete).
+- Orphan probe CE **`probe-no-crtags`** in Batch (if still present from IAM debugging) — delete in console when convenient.

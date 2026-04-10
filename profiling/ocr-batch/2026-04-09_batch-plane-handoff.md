@@ -118,7 +118,7 @@ Treat these as **implicit decisions** unless overridden via CLI.
 | **Spot** | `--spot` exists; Spot fleet IAM and quota validation not scripted. |
 | **Service quotas / SLRs** | GPU vCPU limits and first-run Batch/Spot SLRs in region — manual or separate check. |
 | **CE update** | Changing instance type, max vCPU, or subnets on an existing CE may require console/API update rules; script does not `UpdateComputeEnvironment`. |
-| **Audit** | Profile **Audit** section lacks dedicated Batch plane § checks (queue VALID, CE VALID, test submit, log tail). |
+| ~~**Audit**~~ | **Done (2026-04-10)** — `batch-worker-plane.profile.md` Audit §§1–4 + first-execution observations back-filled from smoke. |
 | **Image scanning / lifecycle** | ECR scan on push was set in `ensure-ecr-ocr-repo.py`; Batch-specific lifecycle policies not in scope here. |
 
 ---
@@ -150,3 +150,12 @@ Ordered path from **current repo state** to **one successful OCR job in Batch**:
 | Submit tool | [`tools/submit-ocr-batch-job.py`](../../tools/submit-ocr-batch-job.py) |
 | ECR repo helper | [`tools/ensure-ecr-ocr-repo.py`](../../tools/ensure-ecr-ocr-repo.py) |
 | Catalog layout (example) | [`cloud-resources.example.md`](../../cloud-resources.example.md) |
+
+---
+
+## 7. Smoke completion (2026-04-10)
+
+- **Batch job** reached **SUCCEEDED**; **three** objects under the chosen `processed/…` prefix (`.md`, `.json`, original basename).
+- **Profile** [`batch-worker-plane.profile.md`](batch-worker-plane.profile.md): **Audit** intro + §3 submit checkpoint + **First-execution observations** (resource limits, `SameFileError`, submit UTF-8, `OCR_LOG_LEVEL`) updated for the next agent.
+- **Gitignored catalog:** refresh root **`cloud-resources.md`** with current stack outputs / job def revision / ECR digest if you track operational pins there.
+- **Working tree:** review uncommitted **`cloud/cf-cloud-permission-roles.yaml`** (adds `ecr:DescribeRepositories` on the orchestrator policy) and **`profiling/ocr-batch/container/processor.py`** (`OCR_LOG_LEVEL`); **`cloud/Untitled`** stray file removed if it reappears.

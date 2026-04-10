@@ -408,6 +408,7 @@ Resources:
               - ecr:GetDownloadUrlForLayer
               - ecr:BatchGetImage
               - ecr:DescribeImages
+              - ecr:DescribeRepositories
               - ecr:InitiateLayerUpload
               - ecr:UploadLayerPart
               - ecr:CompleteLayerUpload

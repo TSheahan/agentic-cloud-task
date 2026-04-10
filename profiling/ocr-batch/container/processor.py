@@ -15,6 +15,10 @@ basename (same as input key).
 Local mode: `OCR_LOCAL_FILE` + `OCR_LOCAL_OUTPUT_DIR` — write the same three
 files locally (no S3).
 
+Logging: optional env **`OCR_LOG_LEVEL`** (`DEBUG`, `INFO`, `WARNING`, `ERROR`,
+`CRITICAL`; default **`WARNING`**) applied before Docling/RapidOCR import so
+CloudWatch stays quiet unless you opt into verbose library logs.
+
 Usage (S3):
     python processor.py <input_s3_uri> <output_s3_prefix>
 
@@ -30,6 +34,7 @@ Example (S3):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -41,6 +46,23 @@ from pathlib import Path
 # Not declared as ENV in Dockerfile — setting it there causes docling 2.85+ to
 # KeyError on _default_models["paddle"] inside the rapidocr model resolver.
 os.environ.setdefault("DOCLING_ARTIFACTS_PATH", "/app/docling-models")
+
+
+def _configure_logging() -> None:
+    """Apply root log level before third-party imports (default: WARNING)."""
+    raw = os.environ.get("OCR_LOG_LEVEL", "WARNING").strip().upper()
+    level = getattr(logging, raw, None)
+    if not isinstance(level, int):
+        level = logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s [%(name)s] %(message)s",
+        stream=sys.stderr,
+        force=True,
+    )
+
+
+_configure_logging()
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
