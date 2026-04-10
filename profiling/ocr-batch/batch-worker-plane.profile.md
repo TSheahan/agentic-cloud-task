@@ -27,7 +27,7 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
 
 - **Subnet IDs for Batch workers** default to the **detected default VPC public subnets**. The worker security group blocks all inbound, so a public IP creates no attack surface; outbound reaches ECR, S3, and CloudWatch via the VPC internet gateway with no NAT or endpoint cost. Revisit if compliance mandates no public IPs or the VPC gains existing private-subnet + NAT infrastructure.
 
-- **Compute environment, job queue, and container job definition** exist in the project region. **Provisioning is idempotent** for all three resources. Job container: **1 GPU**, **4 vCPU**, **16 GiB**, command **`Ref::inputS3`**, **`Ref::outputS3`** matching [`processor.py`](container/processor.py) S3 mode. **Image** referenced by **`:latest`** tag; submit jobs by **name only** (latest active revision).
+- **Compute environment, job queue, and container job definition** exist in the project region. **Provisioning is idempotent** for all three resources. Job container: **1 GPU**, **3 vCPU**, **15360 MiB** (not the full g4dn.xlarge nominal 4 vCPU / 16 GiB — ECS/Batch host reserve otherwise yields `MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT`), command **`Ref::inputS3`**, **`Ref::outputS3`** matching [`processor.py`](container/processor.py) S3 mode. **Image** referenced by **`:latest`** tag; submit jobs by **name only** (latest active revision).
   - **On-demand EC2** (not Spot): cost difference is not a controlling concern; reliable availability reduces design load on the caller (no retry strategy, no fleet role, no interruption handling).
   - **`maxvCpus` = 4** (one g4dn.xlarge): single user, high paper backlog, low scan rate, interpretation in the loop — one worker disposes of the workload. `--max-vcpus` CLI flag exists if concurrency is needed later.
   - **Job definition registration is idempotent:** provisioner describes the latest active revision and compares image, resource requirements, command, parameters, and IAM role ARNs; registers a new revision only when config differs. Aligns with the `_ensure_*` pattern used for CE and queue.
@@ -71,7 +71,7 @@ export AGENTIC_BATCH_OCR_WORKER_SUBNETS=subnet-aaa,subnet-bbb
 
 #### 3. Provision compute environment, queue, job definition (workstation)
 
-Project `venv/`, `.env` loaded. Use `--assume-role` if Batch APIs require the orchestrator role (same pattern as [`ensure-ecr-ocr-repo.py`](../../tools/ensure-ecr-ocr-repo.py)). Image defaults to `:latest`.
+Project `venv/`, `.env` loaded. Use `--assume-role` or set **`AGENTIC_ORCHESTRATOR_ROLE_ARN`** if Batch APIs require the orchestrator role (see [`tools/_env.py`](../../tools/_env.py) and [`tools/AGENTS.md`](../../tools/AGENTS.md)). Image defaults to `:latest`.
 
 ```bash
 python tools/provision-ocr-batch.py \
@@ -92,15 +92,12 @@ Derived from first smoke-test execution (2026-04-10). Steps 1--2 verified; steps
 ```bash
 # Orchestrator reads stack outputs (DescribeStacks)
 python -c "
-from tools._env import *; import boto3
-sts = boto3.client('sts', region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID_CLOUD,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD)
-c = sts.assume_role(RoleArn='arn:aws:iam::613737894147:role/agentic-cloud-task-orchestrator-role',
-    RoleSessionName='audit')['Credentials']
-cfn = boto3.client('cloudformation', region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=c['AccessKeyId'], aws_secret_access_key=c['SecretAccessKey'],
-    aws_session_token=c['SessionToken'])
+import sys
+sys.path.insert(0, 'tools')
+from _env import boto3_session, resolved_assume_role_arn
+ROLE = 'arn:aws:iam::613737894147:role/agentic-cloud-task-orchestrator-role'
+session = boto3_session(assume_role_arn=resolved_assume_role_arn(ROLE), role_session_name='audit-cfn')
+cfn = session.client('cloudformation')
 s = cfn.describe_stacks(StackName='agentic-batch-ocr')['Stacks'][0]
 assert s['StackStatus'] == 'CREATE_COMPLETE'
 for o in s['Outputs']: print(f\"{o['OutputKey']:30s} = {o['OutputValue']}\")

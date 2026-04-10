@@ -42,6 +42,7 @@ Follows the [state convergence pattern](../../policies/state-convergence-pattern
   - `AWS_ACCESS_KEY_ID_CLOUD`
   - `AWS_SECRET_ACCESS_KEY_CLOUD`
   - `AWS_DEFAULT_REGION`
+  - Optional **`AGENTIC_ORCHESTRATOR_ROLE_ARN`** — ARN of `agentic-cloud-task-orchestrator-role` (or equivalent). When set, `tools/_env.py` and tools that call `resolved_assume_role_arn` use it so Batch/ECR/full orchestrator APIs work without passing `--assume-role` every time. See [tools/AGENTS.md](../../tools/AGENTS.md).
 - **`.env` is gitignored** (already covered by project `.gitignore`).
 - **`.env.example` exists** at project root documenting the required
   variable names without values.
