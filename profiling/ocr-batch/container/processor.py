@@ -104,7 +104,8 @@ def _write_outputs(result, out_dir: Path, stem: str, source_path: Path) -> None:
         encoding="utf-8",
     )
     dest_original = out_dir / source_path.name
-    shutil.copy2(source_path, dest_original)
+    if source_path.resolve() != dest_original.resolve():
+        shutil.copy2(source_path, dest_original)
 
 
 def run_local(input_path: Path, output_dir: Path) -> None:
