@@ -4,7 +4,8 @@
 Creates (idempotent where possible):
   - Managed EC2 compute environment: minvCpus=0, desiredvCpus=0, maxvCpus caps workers
   - Job queue bound to that environment
-  - Container job definition: ECR image, 1 GPU / 4 vCPU / 16 GiB, S3 argv via Ref:: parameters
+  - Container job definition: ECR image, 1 GPU / 3 vCPU / 15360 MiB, S3 argv via Ref:: parameters
+    (below g4dn.xlarge nominal 4 vCPU / 16 GiB so Batch can place after ECS host/agent reserve)
 
 **Slow-moving IAM + worker security group** live in CloudFormation
 [`cloud/cf-batch-ocr.yaml`](../cloud/cf-batch-ocr.yaml) (deploy with ``CAPABILITY_NAMED_IAM``).
@@ -37,8 +38,9 @@ endpoints so **image pull** succeeds.
 - ``AGENTIC_BATCH_OCR_LOG_GROUP`` — CloudWatch log group for ``awslogs`` driver
 - ``AGENTIC_BATCH_OCR_S3_BUCKET`` — OCR data bucket (read from stack, used by submit tool)
 
-If ``batch:*`` / ``ecr:*`` are only on the orchestrator role, pass ``--assume-role`` (same pattern as
-``ensure-ecr-ocr-repo.py``). Using ``--stack-name`` additionally requires
+If ``batch:*`` / ``ecr:*`` are only on the orchestrator role, pass ``--assume-role`` or set
+``AGENTIC_ORCHESTRATOR_ROLE_ARN`` in ``.env`` (same pattern as ``ensure-ecr-ocr-repo.py``; see
+``tools/_env.py``). Using ``--stack-name`` additionally requires
 ``cloudformation:DescribeStacks`` on that stack (or keep using copied env vars and omit ``--stack-name``).
 
 Examples:
@@ -70,9 +72,9 @@ from botocore.exceptions import ClientError
 
 from _env import (
     AWS_DEFAULT_REGION,
-    AWS_ACCESS_KEY_ID_CLOUD,
-    AWS_SECRET_ACCESS_KEY_CLOUD,
+    boto3_session,
     detect_default_vpc,
+    resolved_assume_role_arn,
 )
 
 PROJECT_TAG_KEY = "Project"
@@ -102,28 +104,6 @@ DEFAULT_CE_NAME = "ocr-docling-gpu-ce"
 DEFAULT_QUEUE_NAME = "ocr-docling-gpu-queue"
 DEFAULT_JOB_DEF_NAME = "ocr-docling-gpu"
 DEFAULT_REPO = "ocr-docling-gpu"
-
-
-def _session(assume_role_arn: str | None):
-    base = dict(
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID_CLOUD,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD,
-    )
-    if not assume_role_arn:
-        return boto3.Session(**base)
-    sts = boto3.client("sts", **base)
-    out = sts.assume_role(
-        RoleArn=assume_role_arn,
-        RoleSessionName="provision-ocr-batch",
-    )
-    c = out["Credentials"]
-    return boto3.Session(
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=c["AccessKeyId"],
-        aws_secret_access_key=c["SecretAccessKey"],
-        aws_session_token=c["SessionToken"],
-    )
 
 
 def _batch_tags() -> dict[str, str]:
@@ -288,8 +268,10 @@ def _ensure_job_definition(
         "image": image,
         "resourceRequirements": [
             {"type": "GPU", "value": "1"},
-            {"type": "VCPU", "value": "4"},
-            {"type": "MEMORY", "value": "16384"},
+            # g4dn.xlarge is 4 vCPU / 16 GiB nominal; ECS/Batch leaves host/agent headroom,
+            # so requesting the full nominal triggers MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT.
+            {"type": "VCPU", "value": "3"},
+            {"type": "MEMORY", "value": "15360"},
         ],
         "jobRoleArn": job_role_arn,
         "executionRoleArn": execution_role_arn,
@@ -349,7 +331,10 @@ def main() -> int:
     p.add_argument(
         "--assume-role",
         metavar="ARN",
-        help=f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME})",
+        help=(
+            f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME}); "
+            "overrides AGENTIC_ORCHESTRATOR_ROLE_ARN from .env if both set"
+        ),
     )
     p.add_argument("--compute-env-name", default=DEFAULT_CE_NAME)
     p.add_argument("--queue-name", default=DEFAULT_QUEUE_NAME)
@@ -430,7 +415,10 @@ def main() -> int:
     if args.desired_vcpus > args.max_vcpus or args.min_vcpus > args.max_vcpus:
         sys.exit("error: min/desired vCPUs must not exceed max_vcpus")
 
-    session = _session(args.assume_role)
+    session = boto3_session(
+        assume_role_arn=resolved_assume_role_arn(args.assume_role),
+        role_session_name="provision-ocr-batch",
+    )
     stack_name = (args.stack_name or "").strip() or os.environ.get(ENV_CF_STACK, "").strip()
     stack_outputs = _load_cf_stack_outputs(session, stack_name) if stack_name else None
     if stack_outputs:
@@ -532,7 +520,9 @@ def main() -> int:
         log_group_name=log_group_name or None,
     )
 
-    print("Done. Submit jobs with jobQueue=", args.queue_name, "jobDefinition=", args.job_definition_name, sep="")
+    print(
+        f"Done. Submit jobs with jobQueue={args.queue_name} jobDefinition={args.job_definition_name}"
+    )
     return 0
 
 

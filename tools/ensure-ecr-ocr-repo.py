@@ -5,7 +5,8 @@ Uses .env credentials (same as other tools). Idempotent: creates or verifies tag
 
 If CreateRepository is denied on the IAM user, pass the orchestrator role from
 cloud/cf-cloud-permission-roles.yaml (``agentic-cloud-task-orchestrator-role``)
-via ``--assume-role`` so calls run with the role that carries AgenticCloud-ECR.
+via ``--assume-role`` or set ``AGENTIC_ORCHESTRATOR_ROLE_ARN`` in ``.env`` so calls
+run with the role that carries AgenticCloud-ECR (see ``tools/_env.py``).
 
 Usage:
     python tools/ensure-ecr-ocr-repo.py
@@ -15,37 +16,13 @@ Usage:
 import argparse
 import sys
 
-import boto3
 import botocore.exceptions
 
-from _env import AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID_CLOUD, AWS_SECRET_ACCESS_KEY_CLOUD
+from _env import boto3_session, resolved_assume_role_arn
 
 REPO_NAME = "ocr-docling-gpu"
 PROJECT_TAG = {"Key": "Project", "Value": "agentic-cloud-task"}
 ORCHESTRATOR_ROLE_NAME = "agentic-cloud-task-orchestrator-role"
-
-
-def _ecr_client(assume_role_arn: str | None):
-    base = dict(
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID_CLOUD,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD,
-    )
-    if not assume_role_arn:
-        return boto3.client("ecr", **base)
-    sts = boto3.client("sts", **base)
-    out = sts.assume_role(
-        RoleArn=assume_role_arn,
-        RoleSessionName="ensure-ecr-ocr-repo",
-    )
-    c = out["Credentials"]
-    return boto3.client(
-        "ecr",
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=c["AccessKeyId"],
-        aws_secret_access_key=c["SecretAccessKey"],
-        aws_session_token=c["SessionToken"],
-    )
 
 
 def main() -> int:
@@ -53,10 +30,17 @@ def main() -> int:
     p.add_argument(
         "--assume-role",
         metavar="ARN",
-        help=f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME}) before ECR calls",
+        help=(
+            f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME}); "
+            "overrides AGENTIC_ORCHESTRATOR_ROLE_ARN from .env if both set"
+        ),
     )
     args = p.parse_args()
-    ecr = _ecr_client(args.assume_role)
+    session = boto3_session(
+        assume_role_arn=resolved_assume_role_arn(args.assume_role),
+        role_session_name="ensure-ecr-ocr-repo",
+    )
+    ecr = session.client("ecr")
     try:
         r = ecr.create_repository(
             repositoryName=REPO_NAME,

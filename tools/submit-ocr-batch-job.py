@@ -39,7 +39,7 @@ import time
 import boto3
 from botocore.exceptions import ClientError
 
-from _env import AWS_DEFAULT_REGION, AWS_ACCESS_KEY_ID_CLOUD, AWS_SECRET_ACCESS_KEY_CLOUD
+from _env import boto3_session, resolved_assume_role_arn
 
 ORCHESTRATOR_ROLE_NAME = "agentic-cloud-task-orchestrator-role"
 DEFAULT_QUEUE_NAME = "ocr-docling-gpu-queue"
@@ -51,28 +51,6 @@ ENV_CF_STACK = "AGENTIC_BATCH_OCR_CF_STACK_NAME"
 
 POLL_INTERVAL_S = 15
 TERMINAL_STATES = {"SUCCEEDED", "FAILED"}
-
-
-def _session(assume_role_arn: str | None) -> boto3.Session:
-    base = dict(
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=AWS_ACCESS_KEY_ID_CLOUD,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY_CLOUD,
-    )
-    if not assume_role_arn:
-        return boto3.Session(**base)
-    sts = boto3.client("sts", **base)
-    out = sts.assume_role(
-        RoleArn=assume_role_arn,
-        RoleSessionName="submit-ocr-batch-job",
-    )
-    c = out["Credentials"]
-    return boto3.Session(
-        region_name=AWS_DEFAULT_REGION,
-        aws_access_key_id=c["AccessKeyId"],
-        aws_secret_access_key=c["SecretAccessKey"],
-        aws_session_token=c["SessionToken"],
-    )
 
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
@@ -165,6 +143,13 @@ def _fetch_logs(session: boto3.Session, job: dict, log_group: str, tail: int) ->
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -174,7 +159,10 @@ def main() -> int:
     p.add_argument(
         "--assume-role",
         metavar="ARN",
-        help=f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME})",
+        help=(
+            f"STS assume-role ARN (e.g. ...:role/{ORCHESTRATOR_ROLE_NAME}); "
+            "overrides AGENTIC_ORCHESTRATOR_ROLE_ARN from .env if both set"
+        ),
     )
     p.add_argument("--queue", default=DEFAULT_QUEUE_NAME, help=f"Job queue name (default: {DEFAULT_QUEUE_NAME})")
     p.add_argument("--job-definition", default=DEFAULT_JOB_DEF_NAME, help=f"Job definition name (default: {DEFAULT_JOB_DEF_NAME})")
@@ -185,7 +173,10 @@ def main() -> int:
     p.add_argument("--log-tail", type=int, default=50, help="Number of log events to fetch on failure (default: 50)")
     args = p.parse_args()
 
-    session = _session(args.assume_role)
+    session = boto3_session(
+        assume_role_arn=resolved_assume_role_arn(args.assume_role),
+        role_session_name="submit-ocr-batch-job",
+    )
     batch = session.client("batch")
 
     job_id = _submit(
