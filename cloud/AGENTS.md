@@ -7,7 +7,7 @@ Checked-in config-as-code for cloud platforms. Preferred application method: scr
 | File | Purpose |
 |------|---------|
 | `iam-policy-ec2-basic.json` | IAM policy covering the full instance lifecycle: discover, launch, stop, AMI bake, teardown, networking, key pairs, tagging, debugging, spot. |
-| [`cf-cloud-permission-roles.yaml`](cf-cloud-permission-roles.yaml) | Account-level IAM: orchestrator role, EC2 instance profile (ECR push), managed policies for EC2 / ECR / Batch / S3 / PassRole. |
+| [`cf-cloud-permission-roles.yaml`](cf-cloud-permission-roles.yaml) | Account-level IAM: orchestrator role, EC2 instance profile (ECR push), managed policies for EC2 / ECR / Batch / S3 / PassRole / CloudFormation read. **AgenticOrchestratorGroup** also gets **AgenticCloud-Workstation-EC2-Lifecycle** (EC2 describe + start/stop/reboot on `Project`-tagged instances) so `.env` users can refresh SSH/catalog without assuming the orchestrator role. |
 | [`cf-batch-ocr.yaml`](cf-batch-ocr.yaml) | **OCR Batch — slow-moving plane:** worker security group (no ingress, open egress), Batch service role, ECS task execution role, S3-scoped job role, Batch EC2 instance profile. Does **not** create compute environment, queue, or job definition (those stay in `tools/provision-ocr-batch.py`). Deploy with `CAPABILITY_NAMED_IAM`. |
 
 ### Batch vs permission stack
@@ -48,6 +48,21 @@ All orchestration scripts and profiles must tag created resources with
 | Observability | Observability | `*` (read-only) |
 | Cost | CostGovernance | `*` (account-wide) |
 | Spot | SpotServiceRole | Scoped to service-linked role ARN |
+| Workstation EC2 lifecycle | DescribeInstancesForWorkstation, ManageLifecycleProjectInstances | Attached to **AgenticOrchestratorGroup**: `Describe*` on `*`; start/stop/reboot only when `ec2:ResourceTag/Project` matches the stack parameter |
+
+### Deploy or update the IAM permission stack
+
+Use an AWS principal that can create or update IAM via CloudFormation (the `.env` automation user often cannot). Replace placeholders; use the same `--stack-name` as the initial deploy for updates.
+
+```text
+aws cloudformation deploy ^
+  --template-file cloud/cf-cloud-permission-roles.yaml ^
+  --stack-name YOUR_PERMISSION_STACK_NAME ^
+  --capabilities CAPABILITY_NAMED_IAM ^
+  --parameter-overrides OrchestratorPrincipalARN=arn:aws:iam::ACCOUNT_ID:user/YOUR_USER_NAME
+```
+
+On PowerShell, use line continuation with backtick instead of `^` if you prefer a multi-line command.
 
 ## Next-layer capabilities (not yet included)
 

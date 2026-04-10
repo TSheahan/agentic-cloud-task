@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: '2010-09-09'  # User Memory: NEVER skip automating CF template apply/update
 Description: >
   Complete IAM setup for Agentic Cloud Task.
   Creates:
@@ -21,6 +21,7 @@ Parameters:
 
 Resources:
   # ==================== MANAGED POLICIES ====================
+  # - tracks the permissions the user can exercise AFTER assuming the orchestrator role
 
   AgenticCloudEC2CorePolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -463,6 +464,7 @@ Resources:
         - !Ref AgenticCloudEC2InstanceRole
 
   # ==================== GROUP BINDING FOR USER ====================
+  # - lower-priv user can AssumeRole into orchestrator role
 
   AgenticOrchestratorGroup:
     Type: AWS::IAM::Group

@@ -1,0 +1,64 @@
+# Permission backlog — agentic-cloud-task
+
+Items below are **wanted** additions or fixes for IAM principals used from the
+dev workstation / automation user (e.g. `.env` `AWS_ACCESS_KEY_ID_CLOUD`), so
+agents can **observe and drive EC2** without console-only steps.
+
+When implementing, prefer **tag-scoped** `Resource` / `Condition` (e.g.
+`ec2:ResourceTag/Project=agentic-cloud-task`) to match
+`cloud/cf-cloud-permission-roles.yaml` patterns — widen only if a principal
+must manage untagged legacy instances.
+
+---
+
+## EC2 instance lifecycle — check and control (workstation agent)
+
+**Status:** Implemented in `cf-cloud-permission-roles.yaml` as managed policy
+**AgenticCloud-Workstation-EC2-Lifecycle**, attached to **AgenticOrchestratorGroup**
+(so IAM users in that group — e.g. `.env` static keys — get rights **without**
+`sts:AssumeRole`). Deploy or update the permission CloudFormation stack so the
+change reaches AWS; the automation user cannot call CloudFormation itself unless
+you also grant `cloudformation:*` for that stack.
+
+**Motivation:** Sessions that need to **start a stopped node**, **confirm state /
+public IP**, or **wait until SSH is viable** currently fail if the principal
+lacks EC2 read APIs (e.g. `UnauthorizedOperation` on `ec2:DescribeInstances`).
+Same principal should be able to **start** and **stop** project instances for
+lead-in before remote agent work (sync `processor.py`, `docker build`, smoke).
+
+**Use cases to cover next time**
+
+- Describe instance: state (`pending` / `running` / `stopped`), **PublicIpAddress** /
+  **PrivateIpAddress**, subnet, AZ (refresh `cloud-resources.md` / SSH after start).
+- Start stopped instance; stop instance when done (cost / hygiene); optional
+  reboot for stuck GPU stack.
+- Wait/poll: script or boto3 waiter needs **Describe** APIs, not only Start.
+- Teardown / launch tooling in `tools/` (`teardown-instance.py`,
+  `launch-spot-instance.py`) assumes **Describe*** + **RunInstances** + start/stop/
+  terminate where tagged — backlog here is the **minimal read + start/stop** set
+  for instances already known by ID or Name tag.
+
+**Actions (backlog — refine when attaching to a policy)**
+
+Read / discover (typically `Resource: "*"` for EC2 describe, or scoped via
+conditions if your org requires it):
+
+- ec2:DescribeInstances
+- ec2:DescribeInstanceStatus
+- ec2:DescribeInstanceAttribute (optional — console output / disableApiTermination)
+- ec2:DescribeTags (optional — reconcile Name/Project tags)
+- ec2:DescribeAddresses (optional — if Elastic IPs used)
+- ec2:DescribeNetworkInterfaces (optional — debug ENI / public IP)
+
+Control (scope to tagged instances where possible):
+
+- ec2:StartInstances
+- ec2:StopInstances
+- ec2:RebootInstances (optional)
+
+**Not in this backlog slice** (already covered elsewhere or higher risk): RunInstances,
+TerminateInstances, IAM PassRole — see CloudFormation orchestrator policies.
+
+**Acceptance:** From project venv, `describe_instances` for a known instance ID
+succeeds; `start-instances` on a stopped project node succeeds; agent can poll
+until `running` and then `scp`/`rsync` without a separate AWS console step.
