@@ -15,7 +15,12 @@ assists with workflow execution.
   before running any `tools/` script or boto3 snippet.
 - **AWS credentials** in `.env` at project root (`AWS_ACCESS_KEY_ID_CLOUD`,
   `AWS_SECRET_ACCESS_KEY_CLOUD`, `AWS_DEFAULT_REGION`). Loaded
-  automatically by tools via `python-dotenv`.
+  automatically by tools via `python-dotenv`. The IAM user is often
+  **least-privilege** (e.g. `sts:AssumeRole` into the orchestrator role plus a
+  narrow workstation EC2 policy). For APIs that live only on the role, set
+  **`AGENTIC_ORCHESTRATOR_ROLE_ARN`** in `.env` and/or pass `--assume-role` on
+  tools; **`tools/_env.py`** documents `boto3_session` / `resolved_assume_role_arn`
+  for snippets. Details: [tools/AGENTS.md](tools/AGENTS.md).
 - Full setup details:
   [local dev workstation profile](profiling/local-dev-env/dev-workstation.profile.md).
 
@@ -90,6 +95,33 @@ listing directories or globbing for files.
 **Co-committed updates:** When creating, moving, or removing files, update the
 relevant AGENTS.md routing (and INDEX.md if a top-level area changes) in the
 same commit.
+
+### Co-ownership
+
+This repo’s structure, routing, policies, and rules shape how agents work here.
+Co-ownership obligations are elevated accordingly:
+
+- All checked-in content carries structural consequences — directory purpose alignment,
+  traceability through the INDEX / AGENTS.md spine, and routing. Adding, moving, or
+  modifying content must respect this project’s structural conventions; unchecked
+  growth degrades coherence for later work
+- Meta-structure changes ([INDEX.md](INDEX.md), `AGENTS.md` files, `policies/`, major
+  reshaping of `tools/`) have the widest blast radius — treat these as the highest-impact changes
+- Surface structural changes explicitly — do not bury them in larger diffs
+- Propose structural changes and wait for user alignment before executing
+- When in doubt about a structural decision, ask — the cost of a wrong guess is amplified
+  by shared reliance on this layout
+
+See [policies/agent-user-co-ownership.md](policies/agent-user-co-ownership.md) for full rationale and edge-case guidance.
+
+### Continual learning
+
+Frame your work in terms of the project structure the user co-owns — the directories,
+rules, routing, and conventions that make the system coherent. The user's structural
+understanding deepens not through explicit teaching but through consistent exposure to
+structurally-grounded explanations. Trust this process.
+
+See [policies/continual-learning.md](policies/continual-learning.md) for full rationale.
 
 ## Naming conventions
 
